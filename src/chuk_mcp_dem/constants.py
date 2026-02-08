@@ -205,6 +205,12 @@ DEFAULT_WINDOW_SIZE = 3
 TERRAIN_DERIVATIVES = ["hillshade", "slope", "aspect", "curvature", "tri"]
 ANALYSIS_TOOLS = ["profile", "viewshed"]
 OUTPUT_FORMATS = ["geotiff", "png"]
+SLOPE_UNITS = ["degrees", "percent"]
+
+# Profile & viewshed defaults
+DEFAULT_NUM_POINTS = 100
+DEFAULT_OBSERVER_HEIGHT_M = 1.8
+MAX_VIEWSHED_RADIUS_M = 50000.0  # 50 km max radius
 
 # Cache & retry
 TILE_CACHE_MAX_BYTES = 100 * 1024 * 1024  # 100 MB total
@@ -233,6 +239,10 @@ class ErrorMessages:
     NETWORK_ERROR = "Failed to fetch tile after {} retries: {}"
     INVALID_INTERPOLATION = "Invalid interpolation '{}'. Available: {}"
     INVALID_OUTPUT_FORMAT = "Invalid output format '{}'. Available: {}"
+    INVALID_SLOPE_UNITS = "Invalid slope units '{}'. Available: {}"
+    INVALID_NUM_POINTS = "num_points must be >= 2, got {}"
+    INVALID_RADIUS = "radius_m must be > 0, got {}"
+    RADIUS_TOO_LARGE = "radius_m ({:.0f}) exceeds maximum ({:.0f})"
 
 
 class SuccessMessages:
@@ -245,3 +255,8 @@ class SuccessMessages:
     POINT_ELEVATION = "Elevation at point: {:.1f}m (±{:.1f}m)"
     POINTS_ELEVATION = "Retrieved elevation for {} points"
     STATUS = "DEM MCP Server v{} ({} sources, storage: {})"
+    HILLSHADE_COMPLETE = "Hillshade computed ({} shape, azimuth {:.0f}, altitude {:.0f})"
+    SLOPE_COMPLETE = "Slope computed ({} shape, units: {})"
+    ASPECT_COMPLETE = "Aspect computed ({} shape, flat value: {})"
+    PROFILE_COMPLETE = "Profile extracted: {} points over {:.1f}m"
+    VIEWSHED_COMPLETE = "Viewshed computed: {:.1f}% visible within {:.0f}m radius"

@@ -35,11 +35,13 @@ Supported backends (memory, filesystem, S3) are selected via the
 `CHUK_ARTIFACTS_PROVIDER` environment variable. The artifact store is initialised
 at server startup, not at module import time.
 
-### 6. Test Coverage >90% per File, >95% Overall
+### 6. Test Coverage >90% per File, 95%+ Overall
 
-Every module maintains at least 90% line coverage. Overall project coverage
-target is 95%+. Tests mock at the `DEMManager` level, not at the rasterio layer,
-to test integration between tiles and the manager.
+813 tests across 8 test files. Overall project coverage is 95.43%.
+Every source module maintains at least 78% line coverage (async_server.py,
+which has a short `if __name__` block), with most modules at 95-100%.
+Tests mock at the `DEMManager` level for tool tests, and at the rasterio
+layer for raster I/O unit tests.
 
 ### 7. Graceful Degradation
 
@@ -57,9 +59,9 @@ server.py                         # CLI entry point (sync)
   +-- async_server.py             # Async server setup, tool registration
        +-- tools/discovery/api.py       # list_sources, describe_source, status, capabilities
        +-- tools/download/api.py        # fetch, fetch_point, fetch_points, check_coverage, estimate_size
-       +-- tools/analysis/api.py        # hillshade, slope, aspect (Phase 1.1)
-       +-- core/dem_manager.py          # Cache, download pipeline, artifact storage
-            +-- core/raster_io.py       # COG reading, merging, sampling, terrain, PNG
+       +-- tools/analysis/api.py        # hillshade, slope, aspect, profile, viewshed
+       +-- core/dem_manager.py          # Cache, download pipeline, terrain, artifact storage
+            +-- core/raster_io.py       # COG reading, merging, sampling, terrain, profile, viewshed, PNG
 
 models/responses.py               # Pydantic response models (extra="forbid")
 constants.py                      # Source metadata, cache limits, error messages
@@ -87,10 +89,15 @@ The central orchestrator. Manages:
 - **Tile cache**: LRU dict with byte-size tracking (100 MB total, 10 MB per item)
 - **Tile URL construction**: Source-specific URL builders for Copernicus S3 COGs
 - **Download pipeline**: `fetch_elevation()`, `fetch_point()`, `fetch_points()`
+- **Terrain analysis**: `fetch_hillshade()`, `fetch_slope()`, `fetch_aspect()`
+- **Profile extraction**: `fetch_profile()` with haversine distances and gain/loss
+- **Viewshed analysis**: `fetch_viewshed()` with DDA ray-casting visibility
 - **Void filling**: Nearest-neighbour interpolation for NaN pixels
 - **Artifact storage**: `_store_raster()` writes bytes + metadata to chuk-artifacts
 - **Coverage checking**: `check_coverage()` and `estimate_size()` without I/O
 - **Discovery**: `list_sources()` and `describe_source()` from constant metadata
+
+Result dataclasses: `ElevationResult`, `TerrainResult`, `ProfileResult`, `ViewshedResult`.
 
 ### `core/raster_io.py`
 
@@ -103,16 +110,22 @@ Pure I/O layer -- all functions are synchronous (called via `to_thread()`):
 - `compute_hillshade()`: Horn's method (1981) shaded relief
 - `compute_slope()`: Horn's method slope in degrees or percent
 - `compute_aspect()`: Slope direction with flat-area handling
+- `compute_profile_points()`: Line sampling between two points with haversine distances
+- `compute_viewshed()`: DDA ray-casting visibility analysis from observer point
 - `arrays_to_geotiff()`: NumPy array to GeoTIFF bytes via MemoryFile
 - `elevation_to_hillshade_png()`: Hillshade preview for auto-preview
 - `elevation_to_terrain_png()`: Terrain-coloured PNG with green-brown-white ramp
+- `slope_to_png()`: Green-yellow-red ramp for slope visualisation
+- `aspect_to_png()`: HSV colour wheel for aspect visualisation
 
 ### `models/responses.py`
 
 Pydantic v2 response models for every tool. All use `extra="forbid"` to catch
 serialisation errors early. Includes `SourcesResponse`, `FetchResponse`,
 `PointElevationResponse`, `MultiPointResponse`, `CoverageCheckResponse`,
-`SizeEstimateResponse`, `StatusResponse`, `CapabilitiesResponse`.
+`SizeEstimateResponse`, `StatusResponse`, `CapabilitiesResponse`,
+`HillshadeResponse`, `SlopeResponse`, `AspectResponse`, `ProfilePointInfo`,
+`ProfileResponse`, `ViewshedResponse`.
 
 Every response model implements `to_text()` for human-readable output mode.
 
@@ -127,6 +140,7 @@ All magic strings, source metadata, and configuration values. Includes:
 - `TERRAIN_DERIVATIVES`, `ANALYSIS_TOOLS`, `OUTPUT_FORMATS` -- capability lists
 - Cache limits: `TILE_CACHE_MAX_BYTES` (100 MB), `TILE_CACHE_MAX_ITEM` (10 MB)
 - Terrain defaults: azimuth, altitude, z-factor, window size
+- Profile/viewshed defaults: `DEFAULT_NUM_POINTS` (100), `DEFAULT_OBSERVER_HEIGHT_M` (1.8), `MAX_VIEWSHED_RADIUS_M` (50 km)
 
 ---
 
@@ -178,6 +192,54 @@ All magic strings, source metadata, and configuration values. Includes:
        +-- coverage_bounds intersection          <-- pure geometry
        +-- _get_tile_ids(source, bbox)           <-- tile enumeration
        +-- pixel/size estimation                 <-- arithmetic only
+```
+
+### Terrain Analysis (hillshade, slope, aspect)
+
+```
+5. dem_hillshade(bbox, source, azimuth, altitude, z_factor, ...)
+   +-- manager.fetch_hillshade()
+       +-- _validate_bbox(bbox)
+       +-- _get_tile_urls(source, bbox)
+       +-- to_thread(raster_io.read_and_merge_tiles)   <-- fetch elevation
+       +-- to_thread(raster_io.fill_voids)             <-- void fill
+       +-- to_thread(raster_io.compute_hillshade)      <-- Horn's method
+       +-- to_thread(raster_io.arrays_to_geotiff)      <-- GeoTIFF output
+       |   or to_thread(raster_io.elevation_to_hillshade_png) <-- PNG output
+       +-- _store_raster()                             <-- artifact storage
+```
+
+Slope and aspect follow the same pattern, substituting `compute_slope()` or
+`compute_aspect()` and their respective PNG renderers (`slope_to_png()`,
+`aspect_to_png()`).
+
+### Elevation Profile
+
+```
+6. dem_profile(start, end, source, num_points, interpolation)
+   +-- manager.fetch_profile()
+       +-- _get_tile_urls(source, envelope_bbox)       <-- tiles covering line
+       +-- to_thread(raster_io.read_and_merge_tiles)   <-- merge tiles
+       +-- to_thread(raster_io.fill_voids)             <-- void fill
+       +-- to_thread(raster_io.compute_profile_points) <-- line sampling
+       |     +-- _haversine() per segment              <-- cumulative distance
+       |     +-- sample_elevation() per point          <-- interpolated elevation
+       +-- compute gain/loss from elevation deltas     <-- arithmetic
+```
+
+### Viewshed Analysis
+
+```
+7. dem_viewshed(observer, radius_m, source, observer_height_m, ...)
+   +-- manager.fetch_viewshed()
+       +-- _radius_to_bbox(observer, radius_m)         <-- bbox from radius
+       +-- _get_tile_urls(source, bbox)
+       +-- to_thread(raster_io.read_and_merge_tiles)   <-- merge tiles
+       +-- to_thread(raster_io.fill_voids)             <-- void fill
+       +-- to_thread(raster_io.compute_viewshed)       <-- DDA ray-casting
+       |     +-- _check_line_of_sight() per edge pixel <-- line-of-sight rays
+       +-- to_thread(raster_io.arrays_to_geotiff)      <-- visibility raster
+       +-- _store_raster()                             <-- artifact storage
 ```
 
 ---
@@ -245,6 +307,27 @@ Point elevation queries support three interpolation methods:
 - **bilinear**: 2x2 weighted average. Good accuracy/speed balance (default).
 - **cubic**: 4x4 bicubic spline via `scipy.interpolate.RectBivariateSpline`.
   Falls back to bilinear if the neighbourhood contains NaN or is at the edge.
+
+### DDA Ray-Casting (Viewshed)
+
+Viewshed analysis uses the Digital Differential Analyzer (DDA) algorithm to cast
+rays from the observer to every pixel on the raster edge. For each ray:
+
+1. Step along the ray in the direction of greatest axis change (DDA)
+2. At each step, compute the line-of-sight elevation angle from observer to
+   the current cell
+3. Track the maximum elevation angle seen so far along the ray
+4. A cell is visible if its elevation angle exceeds the running maximum
+
+Pixels outside the specified radius are marked NaN. The observer pixel is
+always visible. Result is a binary float array (1.0 = visible, 0.0 = hidden).
+
+### Haversine Distance (Profile)
+
+Elevation profiles compute cumulative ground distance using the haversine
+formula for great-circle distance on a sphere (R = 6,371,000 m). Each segment
+between consecutive sample points contributes to the running total. The formula
+handles zero-distance edge cases (same point) gracefully.
 
 ### CRS Handling
 

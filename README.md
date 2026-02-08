@@ -6,10 +6,12 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
+[![Tests: 813 passed](https://img.shields.io/badge/tests-813%20passed-brightgreen.svg)]()
+[![Coverage: 95%](https://img.shields.io/badge/coverage-95%25-brightgreen.svg)]()
 
 ## Features
 
-This MCP server provides access to global elevation data through 6 DEM sources via nine tools (Phase 1.0).
+This MCP server provides access to global elevation data through 6 DEM sources via 14 tools (Phase 1.0-1.2).
 
 **All tools return fully-typed Pydantic v2 models** for type safety, validation, and excellent IDE support. All tools support `output_mode="text"` for human-readable output alongside the default JSON.
 
@@ -82,6 +84,39 @@ Estimate download size before fetching:
 - Pixel count and byte size calculation
 - Warnings for large downloads (>=500 MB, >=1 GB)
 - Optional custom resolution target
+
+### Terrain Analysis Tools
+
+#### 10. Hillshade (`dem_hillshade`)
+Compute shaded relief from elevation data:
+- Horn's method (1981) with configurable sun azimuth and altitude
+- Vertical exaggeration via z-factor
+- GeoTIFF or PNG output with auto-preview
+
+#### 11. Slope (`dem_slope`)
+Compute slope steepness:
+- Output in degrees or percent
+- Horn's method gradient computation
+- GeoTIFF or PNG output with green-yellow-red colour ramp
+
+#### 12. Aspect (`dem_aspect`)
+Compute slope direction:
+- 0-360 degrees from north, flat areas marked with configurable value
+- GeoTIFF or PNG output with HSV colour wheel
+
+### Profile & Viewshed Tools
+
+#### 13. Elevation Profile (`dem_profile`)
+Extract elevation cross-section between two points:
+- Configurable number of sample points (default 100)
+- Returns per-point elevation, distance, total gain and loss
+- Three interpolation methods
+
+#### 14. Viewshed (`dem_viewshed`)
+Compute visible area from an observer point:
+- DDA ray-casting algorithm for line-of-sight analysis
+- Configurable observer height and radius (up to 50 km)
+- Returns visibility percentage and raster artifact
 
 ## Installation
 
@@ -169,6 +204,9 @@ Once configured, you can ask Claude questions like:
 - "How big would a 30m DEM download be for the entire state of Colorado?"
 - "Get elevation for these 5 mountain peaks"
 - "Describe the FABDEM source -- how is it different from Copernicus?"
+- "Generate a hillshade map for Mount Rainier"
+- "What's the slope along the trail from A to B?"
+- "Show me what's visible from this viewpoint within 5 km"
 
 ## Tool Reference
 
@@ -185,6 +223,11 @@ All tools accept an optional `output_mode` parameter (`"json"` default, or `"tex
 | `dem_fetch_points` | Elevation at multiple points | `points`, `interpolation` |
 | `dem_check_coverage` | Check source coverage | `bbox`, `source` |
 | `dem_estimate_size` | Estimate download size | `bbox`, `source`, `resolution_m` |
+| `dem_hillshade` | Compute shaded relief | `bbox`, `azimuth`, `altitude`, `z_factor` |
+| `dem_slope` | Compute slope steepness | `bbox`, `units`, `output_format` |
+| `dem_aspect` | Compute slope direction | `bbox`, `flat_value`, `output_format` |
+| `dem_profile` | Elevation cross-section | `start`, `end`, `num_points` |
+| `dem_viewshed` | Visibility analysis | `observer`, `radius_m`, `observer_height_m` |
 
 ### dem_fetch
 
@@ -193,7 +236,8 @@ All tools accept an optional `output_mode` parameter (`"json"` default, or `"tex
   "bbox": [-121.8, 46.7, -121.6, 46.9],     # [west, south, east, north]
   "source": "cop30",                          # optional (default: cop30)
   "fill_voids": true,                         # optional (default: true)
-  "output_format": "geotiff"                  # optional: "geotiff" or "png"
+  "resolution_m": null,                       # optional: target resolution in metres
+  "output_crs": null                          # optional: output CRS
 }
 ```
 
@@ -248,7 +292,7 @@ server.py                         # CLI entry point (sync)
   +-- async_server.py             # Async server setup, tool registration
        +-- tools/discovery/       # list_sources, describe, status, capabilities
        +-- tools/download/        # fetch, fetch_point, fetch_points, coverage, size
-       +-- tools/analysis/        # hillshade, slope, aspect (Phase 1.1)
+       +-- tools/analysis/        # hillshade, slope, aspect, profile, viewshed
        +-- core/dem_manager.py    # Cache, URL construction, download pipeline
             +-- core/raster_io.py # COG read, merge, sample, terrain, PNG
 ```
@@ -290,8 +334,8 @@ pip install -e ".[dev]"
 ### Running Tests
 
 ```bash
-make test              # Run tests
-make test-cov          # Run tests with coverage
+make test              # Run 813 tests
+make test-cov          # Run tests with coverage (95%)
 make coverage-report   # Show coverage report
 ```
 

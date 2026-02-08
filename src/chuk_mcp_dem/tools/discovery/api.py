@@ -150,13 +150,16 @@ def register_discovery_tools(mcp, manager):
                 terrain_derivatives=TERRAIN_DERIVATIVES,
                 analysis_tools=ANALYSIS_TOOLS,
                 output_formats=OUTPUT_FORMATS,
-                tool_count=9,
+                tool_count=14,
                 llm_guidance=(
                     "Use dem_list_sources to discover available DEMs. "
                     "Use dem_describe_source for detailed source info. "
                     "Use dem_check_coverage before fetching to verify data availability. "
                     "Use dem_fetch to download elevation data for a bounding box. "
                     "Use dem_fetch_point for single-point elevation queries. "
+                    "Use dem_hillshade/dem_slope/dem_aspect for terrain analysis. "
+                    "Use dem_profile for elevation cross-sections between two points. "
+                    "Use dem_viewshed for visibility analysis from an observer point. "
                     "Default source is cop30 (Copernicus GLO-30, 30m global)."
                 ),
                 message=f"{ServerConfig.NAME} v{ServerConfig.VERSION} capabilities",

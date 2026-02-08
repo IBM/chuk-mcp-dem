@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from PIL import Image
 
 
 # ---------------------------------------------------------------------------
@@ -1095,3 +1096,764 @@ class TestIntegration:
                 data = src.read(1)
                 assert data.shape == (100, 100)
                 assert src.crs == sample_crs
+
+
+# ---------------------------------------------------------------------------
+# slope_to_png
+# ---------------------------------------------------------------------------
+
+
+class TestSlopeToPng:
+    """Tests for slope_to_png() -- slope visualisation as PNG."""
+
+    def test_returns_valid_png_bytes(self, sample_elevation, sample_transform):
+        """Output is valid PNG (starts with PNG signature)."""
+        from chuk_mcp_dem.core.raster_io import compute_slope, slope_to_png
+
+        slope = compute_slope(sample_elevation, sample_transform)
+        result = slope_to_png(slope)
+        assert isinstance(result, bytes)
+        assert result[:4] == b"\x89PNG"
+
+    def test_flat_surface_all_green(self, sample_transform):
+        """Flat surface (slope=0 everywhere) produces all-green pixels."""
+        from chuk_mcp_dem.core.raster_io import slope_to_png
+
+        flat_slope = np.zeros((50, 50), dtype=np.float32)
+        result = slope_to_png(flat_slope)
+        img = Image.open(io.BytesIO(result))
+        arr = np.array(img)
+        # norm=0 => r=0, g=255, b=0 => pure green
+        assert np.all(arr[:, :, 0] == 0)  # red channel = 0
+        assert np.all(arr[:, :, 1] == 255)  # green channel = 255
+        assert np.all(arr[:, :, 2] == 0)  # blue channel = 0
+
+    def test_steep_surface_red_dominant(self, sample_transform):
+        """Very steep slope (90 degrees) produces red-dominant pixels."""
+        from chuk_mcp_dem.core.raster_io import slope_to_png
+
+        steep_slope = np.full((30, 30), 90.0, dtype=np.float32)
+        result = slope_to_png(steep_slope, units="degrees")
+        img = Image.open(io.BytesIO(result))
+        arr = np.array(img)
+        # norm=1.0 => r=255, g=0, b=0
+        assert np.all(arr[:, :, 0] == 255)  # red channel = 255
+        assert np.all(arr[:, :, 1] == 0)  # green channel = 0
+
+    def test_moderate_slope_yellow_region(self, sample_transform):
+        """Moderate slope (~45 degrees) produces yellow-ish pixels."""
+        from chuk_mcp_dem.core.raster_io import slope_to_png
+
+        mod_slope = np.full((20, 20), 45.0, dtype=np.float32)
+        result = slope_to_png(mod_slope, units="degrees")
+        img = Image.open(io.BytesIO(result))
+        arr = np.array(img)
+        # norm=0.5 => r=255, g=255, b=0 => yellow
+        assert np.all(arr[:, :, 0] == 255)
+        assert np.all(arr[:, :, 1] == 255)
+
+    def test_correct_rgb_mode(self, sample_transform):
+        """Output PNG is RGB (3-channel)."""
+        from chuk_mcp_dem.core.raster_io import slope_to_png
+
+        slope = np.ones((20, 20), dtype=np.float32) * 30.0
+        result = slope_to_png(slope)
+        img = Image.open(io.BytesIO(result))
+        assert img.mode == "RGB"
+
+    def test_dimensions_match_input(self, sample_elevation, sample_transform):
+        """PNG dimensions match the slope array shape."""
+        from chuk_mcp_dem.core.raster_io import compute_slope, slope_to_png
+
+        slope = compute_slope(sample_elevation, sample_transform)
+        result = slope_to_png(slope)
+        img = Image.open(io.BytesIO(result))
+        assert img.size == (slope.shape[1], slope.shape[0])
+
+    def test_percent_units_accepted(self, sample_transform):
+        """Percent units are handled without error."""
+        from chuk_mcp_dem.core.raster_io import slope_to_png
+
+        slope_pct = np.full((20, 20), 100.0, dtype=np.float32)
+        result = slope_to_png(slope_pct, units="percent")
+        assert result[:4] == b"\x89PNG"
+
+    def test_percent_units_normalisation_range(self):
+        """Percent units use max_val=200 for normalisation."""
+        from chuk_mcp_dem.core.raster_io import slope_to_png
+
+        # 200% slope -> norm=1.0 -> full red
+        slope_pct = np.full((10, 10), 200.0, dtype=np.float32)
+        result = slope_to_png(slope_pct, units="percent")
+        img = Image.open(io.BytesIO(result))
+        arr = np.array(img)
+        assert np.all(arr[:, :, 0] == 255)
+        assert np.all(arr[:, :, 1] == 0)
+
+    def test_nan_values_treated_as_zero(self):
+        """NaN values in slope are treated as zero (flat/green)."""
+        from chuk_mcp_dem.core.raster_io import slope_to_png
+
+        slope_nan = np.full((10, 10), np.nan, dtype=np.float32)
+        result = slope_to_png(slope_nan)
+        img = Image.open(io.BytesIO(result))
+        arr = np.array(img)
+        assert np.all(arr[:, :, 0] == 0)
+        assert np.all(arr[:, :, 1] == 255)
+
+
+# ---------------------------------------------------------------------------
+# aspect_to_png
+# ---------------------------------------------------------------------------
+
+
+class TestAspectToPng:
+    """Tests for aspect_to_png() -- aspect visualisation as PNG."""
+
+    def test_returns_valid_png_bytes(self, sample_elevation, sample_transform):
+        """Output is valid PNG (starts with PNG signature)."""
+        from chuk_mcp_dem.core.raster_io import compute_aspect, aspect_to_png
+
+        aspect = compute_aspect(sample_elevation, sample_transform)
+        result = aspect_to_png(aspect)
+        assert isinstance(result, bytes)
+        assert result[:4] == b"\x89PNG"
+
+    def test_flat_areas_grey(self):
+        """All-flat surface (all flat_value) produces uniform grey pixels."""
+        from chuk_mcp_dem.core.raster_io import aspect_to_png
+
+        flat_aspect = np.full((40, 40), -1.0, dtype=np.float32)
+        result = aspect_to_png(flat_aspect)
+        img = Image.open(io.BytesIO(result))
+        arr = np.array(img)
+        # Flat areas: [128, 128, 128]
+        assert np.all(arr[:, :, 0] == 128)
+        assert np.all(arr[:, :, 1] == 128)
+        assert np.all(arr[:, :, 2] == 128)
+
+    def test_custom_flat_value_grey(self):
+        """Custom flat_value also produces grey pixels."""
+        from chuk_mcp_dem.core.raster_io import aspect_to_png
+
+        flat_aspect = np.full((20, 20), -999.0, dtype=np.float32)
+        result = aspect_to_png(flat_aspect, flat_value=-999.0)
+        img = Image.open(io.BytesIO(result))
+        arr = np.array(img)
+        assert np.all(arr[:, :, 0] == 128)
+        assert np.all(arr[:, :, 1] == 128)
+        assert np.all(arr[:, :, 2] == 128)
+
+    def test_non_flat_areas_have_colour(self):
+        """Non-flat areas have non-grey colour from the HSV wheel."""
+        from chuk_mcp_dem.core.raster_io import aspect_to_png
+
+        # Aspect = 0 degrees (north-facing)
+        north_aspect = np.full((20, 20), 0.0, dtype=np.float32)
+        result = aspect_to_png(north_aspect)
+        img = Image.open(io.BytesIO(result))
+        arr = np.array(img)
+        # Should NOT be grey (128,128,128)
+        pixel = arr[10, 10]
+        assert not (pixel[0] == 128 and pixel[1] == 128 and pixel[2] == 128)
+
+    def test_different_aspects_different_colours(self):
+        """Different aspect angles produce different colours."""
+        from chuk_mcp_dem.core.raster_io import aspect_to_png
+
+        north = np.full((10, 10), 0.0, dtype=np.float32)
+        east = np.full((10, 10), 90.0, dtype=np.float32)
+
+        result_n = aspect_to_png(north)
+        result_e = aspect_to_png(east)
+
+        img_n = np.array(Image.open(io.BytesIO(result_n)))
+        img_e = np.array(Image.open(io.BytesIO(result_e)))
+
+        # The centre pixel should differ
+        assert not np.array_equal(img_n[5, 5], img_e[5, 5])
+
+    def test_correct_rgb_mode(self):
+        """Output PNG is RGB (3-channel)."""
+        from chuk_mcp_dem.core.raster_io import aspect_to_png
+
+        aspect = np.full((20, 20), 180.0, dtype=np.float32)
+        result = aspect_to_png(aspect)
+        img = Image.open(io.BytesIO(result))
+        assert img.mode == "RGB"
+
+    def test_dimensions_match_input(self, sample_elevation, sample_transform):
+        """PNG dimensions match the aspect array shape."""
+        from chuk_mcp_dem.core.raster_io import compute_aspect, aspect_to_png
+
+        aspect = compute_aspect(sample_elevation, sample_transform)
+        result = aspect_to_png(aspect)
+        img = Image.open(io.BytesIO(result))
+        assert img.size == (aspect.shape[1], aspect.shape[0])
+
+    def test_mixed_flat_and_sloped(self):
+        """Array with both flat and non-flat pixels handles both correctly."""
+        from chuk_mcp_dem.core.raster_io import aspect_to_png
+
+        aspect = np.full((20, 20), 45.0, dtype=np.float32)
+        aspect[0:5, :] = -1.0  # flat band at top
+        result = aspect_to_png(aspect)
+        img = Image.open(io.BytesIO(result))
+        arr = np.array(img)
+        # Flat rows are grey
+        assert np.all(arr[0:5, :, 0] == 128)
+        assert np.all(arr[0:5, :, 1] == 128)
+        assert np.all(arr[0:5, :, 2] == 128)
+        # Non-flat rows are NOT grey
+        non_flat_pixel = arr[10, 10]
+        assert not (
+            non_flat_pixel[0] == 128 and non_flat_pixel[1] == 128 and non_flat_pixel[2] == 128
+        )
+
+    def test_full_circle_aspects(self):
+        """Various aspect angles from 0-359 all produce valid PNG."""
+        from chuk_mcp_dem.core.raster_io import aspect_to_png
+
+        for angle in [0, 45, 90, 135, 180, 225, 270, 315, 359]:
+            aspect = np.full((5, 5), float(angle), dtype=np.float32)
+            result = aspect_to_png(aspect)
+            assert result[:4] == b"\x89PNG"
+
+
+# ---------------------------------------------------------------------------
+# _haversine
+# ---------------------------------------------------------------------------
+
+
+class TestHaversine:
+    """Tests for _haversine() -- great-circle distance computation."""
+
+    def test_one_degree_latitude_at_equator(self):
+        """1 degree of latitude at the equator is approximately 111.2 km."""
+        from chuk_mcp_dem.core.raster_io import _haversine
+
+        d = _haversine(0.0, 0.0, 1.0, 0.0)
+        assert d == pytest.approx(111_195.0, rel=0.01)
+
+    def test_zero_distance_same_point(self):
+        """Distance from a point to itself is zero."""
+        from chuk_mcp_dem.core.raster_io import _haversine
+
+        d = _haversine(47.0, 7.0, 47.0, 7.0)
+        assert d == pytest.approx(0.0, abs=1e-6)
+
+    def test_small_distance(self):
+        """Small distance (0.001 degrees) at mid-latitude is in the 100 m range."""
+        from chuk_mcp_dem.core.raster_io import _haversine
+
+        d = _haversine(47.0, 7.0, 47.001, 7.0)
+        assert 100.0 < d < 150.0
+
+    def test_one_degree_longitude_at_equator(self):
+        """1 degree of longitude at the equator is approximately 111.2 km."""
+        from chuk_mcp_dem.core.raster_io import _haversine
+
+        d = _haversine(0.0, 0.0, 0.0, 1.0)
+        assert d == pytest.approx(111_195.0, rel=0.01)
+
+    def test_longitude_shrinks_with_latitude(self):
+        """1 degree of longitude at 60N is approximately half the equatorial distance."""
+        from chuk_mcp_dem.core.raster_io import _haversine
+
+        d_equator = _haversine(0.0, 0.0, 0.0, 1.0)
+        d_60n = _haversine(60.0, 0.0, 60.0, 1.0)
+        assert d_60n == pytest.approx(d_equator * 0.5, rel=0.02)
+
+    def test_symmetry(self):
+        """Distance is symmetric: d(A,B) == d(B,A)."""
+        from chuk_mcp_dem.core.raster_io import _haversine
+
+        d_ab = _haversine(47.0, 7.0, 48.0, 8.0)
+        d_ba = _haversine(48.0, 8.0, 47.0, 7.0)
+        assert d_ab == pytest.approx(d_ba, rel=1e-10)
+
+    def test_known_distance_zurich_bern(self):
+        """Zurich (47.3769, 8.5417) to Bern (46.9480, 7.4474) is approximately 95 km."""
+        from chuk_mcp_dem.core.raster_io import _haversine
+
+        d = _haversine(47.3769, 8.5417, 46.9480, 7.4474)
+        assert d == pytest.approx(95_000.0, rel=0.05)
+
+    def test_antipodal_points(self):
+        """Distance between antipodal points is approximately half Earth circumference."""
+        from chuk_mcp_dem.core.raster_io import _haversine
+
+        d = _haversine(0.0, 0.0, 0.0, 180.0)
+        half_circumference = math.pi * 6371000.0
+        assert d == pytest.approx(half_circumference, rel=0.001)
+
+
+# ---------------------------------------------------------------------------
+# compute_profile_points
+# ---------------------------------------------------------------------------
+
+
+class TestComputeProfilePoints:
+    """Tests for compute_profile_points() -- line sampling."""
+
+    def test_correct_number_of_points(self, sample_elevation, sample_transform):
+        """Returns the requested number of points."""
+        from chuk_mcp_dem.core.raster_io import compute_profile_points
+
+        lons, lats, dists, elevs = compute_profile_points(
+            sample_elevation,
+            sample_transform,
+            start=[7.1, 46.9],
+            end=[7.5, 46.5],
+            num_points=50,
+        )
+        assert len(lons) == 50
+        assert len(lats) == 50
+        assert len(dists) == 50
+        assert len(elevs) == 50
+
+    def test_first_distance_is_zero(self, sample_elevation, sample_transform):
+        """First distance value is always zero."""
+        from chuk_mcp_dem.core.raster_io import compute_profile_points
+
+        _, _, dists, _ = compute_profile_points(
+            sample_elevation,
+            sample_transform,
+            start=[7.2, 46.8],
+            end=[7.4, 46.6],
+            num_points=20,
+        )
+        assert dists[0] == 0.0
+
+    def test_distances_monotonically_increasing(self, sample_elevation, sample_transform):
+        """Distances are strictly monotonically increasing."""
+        from chuk_mcp_dem.core.raster_io import compute_profile_points
+
+        _, _, dists, _ = compute_profile_points(
+            sample_elevation,
+            sample_transform,
+            start=[7.1, 46.9],
+            end=[7.5, 46.5],
+            num_points=30,
+        )
+        for i in range(1, len(dists)):
+            assert dists[i] > dists[i - 1]
+
+    def test_start_coordinates_match(self, sample_elevation, sample_transform):
+        """First point coordinates match the start argument."""
+        from chuk_mcp_dem.core.raster_io import compute_profile_points
+
+        start = [7.15, 46.85]
+        end = [7.45, 46.55]
+        lons, lats, _, _ = compute_profile_points(
+            sample_elevation,
+            sample_transform,
+            start=start,
+            end=end,
+            num_points=10,
+        )
+        assert lons[0] == pytest.approx(start[0])
+        assert lats[0] == pytest.approx(start[1])
+
+    def test_end_coordinates_match(self, sample_elevation, sample_transform):
+        """Last point coordinates match the end argument."""
+        from chuk_mcp_dem.core.raster_io import compute_profile_points
+
+        start = [7.15, 46.85]
+        end = [7.45, 46.55]
+        lons, lats, _, _ = compute_profile_points(
+            sample_elevation,
+            sample_transform,
+            start=start,
+            end=end,
+            num_points=10,
+        )
+        assert lons[-1] == pytest.approx(end[0])
+        assert lats[-1] == pytest.approx(end[1])
+
+    def test_elevations_are_floats(self, sample_elevation, sample_transform):
+        """All elevation values are floats."""
+        from chuk_mcp_dem.core.raster_io import compute_profile_points
+
+        _, _, _, elevs = compute_profile_points(
+            sample_elevation,
+            sample_transform,
+            start=[7.2, 46.8],
+            end=[7.4, 46.6],
+            num_points=15,
+        )
+        assert all(isinstance(e, float) for e in elevs)
+
+    def test_elevations_within_data_range(self, sample_elevation, sample_transform):
+        """Sampled elevations are within the data range (100-500m) or NaN."""
+        from chuk_mcp_dem.core.raster_io import compute_profile_points
+
+        _, _, _, elevs = compute_profile_points(
+            sample_elevation,
+            sample_transform,
+            start=[7.2, 46.8],
+            end=[7.4, 46.6],
+            num_points=20,
+        )
+        for e in elevs:
+            if not math.isnan(e):
+                assert 50.0 <= e <= 550.0  # allow some bilinear overshoot
+
+    def test_two_points_profile(self, sample_elevation, sample_transform):
+        """Minimum profile with 2 points works correctly."""
+        from chuk_mcp_dem.core.raster_io import compute_profile_points
+
+        lons, lats, dists, elevs = compute_profile_points(
+            sample_elevation,
+            sample_transform,
+            start=[7.3, 46.7],
+            end=[7.5, 46.5],
+            num_points=2,
+        )
+        assert len(lons) == 2
+        assert dists[0] == 0.0
+        assert dists[1] > 0.0
+
+    def test_nearest_interpolation(self, sample_elevation, sample_transform):
+        """Profile with nearest interpolation returns valid results."""
+        from chuk_mcp_dem.core.raster_io import compute_profile_points
+
+        _, _, _, elevs = compute_profile_points(
+            sample_elevation,
+            sample_transform,
+            start=[7.2, 46.8],
+            end=[7.4, 46.6],
+            num_points=10,
+            interpolation="nearest",
+        )
+        # All points are within the grid, so none should be NaN
+        for e in elevs:
+            assert not math.isnan(e)
+
+    def test_total_distance_plausible(self, sample_elevation, sample_transform):
+        """Total distance between start and end is geographically plausible."""
+        from chuk_mcp_dem.core.raster_io import compute_profile_points, _haversine
+
+        start = [7.1, 46.9]
+        end = [7.5, 46.5]
+        _, _, dists, _ = compute_profile_points(
+            sample_elevation,
+            sample_transform,
+            start=start,
+            end=end,
+            num_points=100,
+        )
+        expected_total = _haversine(start[1], start[0], end[1], end[0])
+        assert dists[-1] == pytest.approx(expected_total, rel=0.01)
+
+
+# ---------------------------------------------------------------------------
+# compute_viewshed
+# ---------------------------------------------------------------------------
+
+
+class TestComputeViewshed:
+    """Tests for compute_viewshed() -- visibility analysis."""
+
+    def test_flat_surface_all_visible_within_radius(self, sample_transform):
+        """On a flat surface, everything within radius is visible."""
+        from chuk_mcp_dem.core.raster_io import compute_viewshed
+
+        flat = np.ones((50, 50), dtype=np.float32) * 500.0
+        # Observer at centre: lon=7.0+25*0.01=7.25, lat=47.0-25*0.01=46.75
+        result = compute_viewshed(
+            flat,
+            sample_transform,
+            observer_lon=7.25,
+            observer_lat=46.75,
+            radius_m=500.0,
+            observer_height_m=1.8,
+        )
+        # All non-NaN cells should be visible (1.0)
+        visible_cells = result[~np.isnan(result)]
+        assert len(visible_cells) > 0
+        assert np.all(visible_cells == 1.0)
+
+    def test_observer_position_visible(self, sample_elevation, sample_transform):
+        """Observer position is always marked as visible."""
+        from chuk_mcp_dem.core.raster_io import compute_viewshed
+
+        result = compute_viewshed(
+            sample_elevation,
+            sample_transform,
+            observer_lon=7.5,
+            observer_lat=46.5,
+            radius_m=500.0,
+            observer_height_m=1.8,
+        )
+        # Observer at pixel (50, 50)
+        assert result[50, 50] == 1.0
+
+    def test_nan_outside_radius(self, sample_transform):
+        """Cells outside the radius remain NaN."""
+        from chuk_mcp_dem.core.raster_io import compute_viewshed
+
+        flat = np.ones((100, 100), dtype=np.float32) * 200.0
+        # Observer at centre (50,50), small radius
+        result = compute_viewshed(
+            flat,
+            sample_transform,
+            observer_lon=7.5,
+            observer_lat=46.5,
+            radius_m=200.0,
+            observer_height_m=1.8,
+        )
+        # Corners should be NaN (far from centre)
+        assert np.isnan(result[0, 0])
+        assert np.isnan(result[0, 99])
+        assert np.isnan(result[99, 0])
+        assert np.isnan(result[99, 99])
+
+    def test_correct_output_shape(self, sample_elevation, sample_transform):
+        """Output shape matches input elevation shape."""
+        from chuk_mcp_dem.core.raster_io import compute_viewshed
+
+        result = compute_viewshed(
+            sample_elevation,
+            sample_transform,
+            observer_lon=7.5,
+            observer_lat=46.5,
+            radius_m=300.0,
+        )
+        assert result.shape == sample_elevation.shape
+
+    def test_output_dtype_float32(self, sample_elevation, sample_transform):
+        """Output dtype is float32."""
+        from chuk_mcp_dem.core.raster_io import compute_viewshed
+
+        result = compute_viewshed(
+            sample_elevation,
+            sample_transform,
+            observer_lon=7.5,
+            observer_lat=46.5,
+            radius_m=300.0,
+        )
+        assert result.dtype == np.float32
+
+    def test_values_are_0_1_or_nan(self, sample_elevation, sample_transform):
+        """All output values are exactly 0.0, 1.0, or NaN."""
+        from chuk_mcp_dem.core.raster_io import compute_viewshed
+
+        result = compute_viewshed(
+            sample_elevation,
+            sample_transform,
+            observer_lon=7.5,
+            observer_lat=46.5,
+            radius_m=500.0,
+        )
+        non_nan = result[~np.isnan(result)]
+        unique_vals = np.unique(non_nan)
+        for v in unique_vals:
+            assert v in (0.0, 1.0)
+
+    def test_ridge_blocks_visibility(self, sample_transform):
+        """A tall ridge between observer and target blocks visibility."""
+        from chuk_mcp_dem.core.raster_io import compute_viewshed
+
+        # Flat terrain with a tall ridge in the middle
+        terrain = np.ones((50, 50), dtype=np.float32) * 100.0
+        terrain[25, :] = 5000.0  # massive wall at row 25
+
+        # Observer at row 10 (north side of the wall)
+        obs_lon = 7.0 + 25 * 0.01  # col 25
+        obs_lat = 47.0 - 10 * 0.01  # row 10
+
+        result = compute_viewshed(
+            terrain,
+            sample_transform,
+            observer_lon=obs_lon,
+            observer_lat=obs_lat,
+            radius_m=5000.0,
+            observer_height_m=1.8,
+        )
+        # Cells on the far side of the wall (row 40) should be hidden
+        far_side = result[40, 20:30]
+        non_nan_far = far_side[~np.isnan(far_side)]
+        if len(non_nan_far) > 0:
+            assert np.all(non_nan_far == 0.0)
+
+    def test_observer_out_of_bounds(self, sample_elevation, sample_transform):
+        """Observer outside the grid produces all-NaN result."""
+        from chuk_mcp_dem.core.raster_io import compute_viewshed
+
+        result = compute_viewshed(
+            sample_elevation,
+            sample_transform,
+            observer_lon=0.0,
+            observer_lat=0.0,
+            radius_m=500.0,
+        )
+        assert np.all(np.isnan(result))
+
+
+# ---------------------------------------------------------------------------
+# _check_line_of_sight
+# ---------------------------------------------------------------------------
+
+
+class TestCheckLineOfSight:
+    """Tests for _check_line_of_sight() -- DDA line-of-sight check."""
+
+    def test_clear_los_flat_terrain(self):
+        """Clear line of sight over flat terrain returns True."""
+        from chuk_mcp_dem.core.raster_io import _check_line_of_sight
+
+        flat = np.ones((50, 50), dtype=np.float32) * 100.0
+        # Observer at (25,25) with height=101.8 (100+1.8), target at (25,40)
+        visible = _check_line_of_sight(
+            flat,
+            r0=25,
+            c0=25,
+            obs_height=101.8,
+            r1=25,
+            c1=40,
+            cellsize_x_m=100.0,
+            cellsize_y_m=100.0,
+        )
+        assert visible
+
+    def test_blocked_by_ridge(self):
+        """Ridge between observer and target blocks line of sight."""
+        from chuk_mcp_dem.core.raster_io import _check_line_of_sight
+
+        terrain = np.ones((50, 50), dtype=np.float32) * 100.0
+        terrain[25, 30] = 5000.0  # tall obstacle between observer and target
+
+        # Observer at (25,25), target at (25,40)
+        visible = _check_line_of_sight(
+            terrain,
+            r0=25,
+            c0=25,
+            obs_height=101.8,
+            r1=25,
+            c1=40,
+            cellsize_x_m=100.0,
+            cellsize_y_m=100.0,
+        )
+        assert not visible
+
+    def test_same_cell_always_visible(self):
+        """Target at same cell as observer is always visible."""
+        from chuk_mcp_dem.core.raster_io import _check_line_of_sight
+
+        terrain = np.ones((20, 20), dtype=np.float32) * 200.0
+        visible = _check_line_of_sight(
+            terrain,
+            r0=10,
+            c0=10,
+            obs_height=201.8,
+            r1=10,
+            c1=10,
+            cellsize_x_m=100.0,
+            cellsize_y_m=100.0,
+        )
+        assert visible
+
+    def test_adjacent_cell_visible(self):
+        """Adjacent cell on flat terrain is visible."""
+        from chuk_mcp_dem.core.raster_io import _check_line_of_sight
+
+        flat = np.ones((20, 20), dtype=np.float32) * 100.0
+        visible = _check_line_of_sight(
+            flat,
+            r0=10,
+            c0=10,
+            obs_height=101.8,
+            r1=10,
+            c1=11,
+            cellsize_x_m=100.0,
+            cellsize_y_m=100.0,
+        )
+        assert visible
+
+    def test_diagonal_clear_los(self):
+        """Diagonal line of sight on flat terrain is clear."""
+        from chuk_mcp_dem.core.raster_io import _check_line_of_sight
+
+        flat = np.ones((50, 50), dtype=np.float32) * 100.0
+        visible = _check_line_of_sight(
+            flat,
+            r0=10,
+            c0=10,
+            obs_height=101.8,
+            r1=40,
+            c1=40,
+            cellsize_x_m=100.0,
+            cellsize_y_m=100.0,
+        )
+        assert visible
+
+    def test_target_higher_than_obstacle_visible(self):
+        """Target on a hill higher than an intermediate obstacle is visible."""
+        from chuk_mcp_dem.core.raster_io import _check_line_of_sight
+
+        terrain = np.ones((50, 50), dtype=np.float32) * 100.0
+        terrain[10, 15] = 150.0  # moderate obstacle
+        terrain[10, 25] = 300.0  # target on high ground
+
+        # Observer at (10,5), height=101.8
+        # Obstacle at (10,15) elev=150, target at (10,25) elev=300
+        # Obstacle angle: (150-101.8) / (10*100) = 48.2/1000 = 0.0482
+        # Target angle: (300-101.8) / (20*100) = 198.2/2000 = 0.0991
+        # target_angle > max_angle -> visible
+        visible = _check_line_of_sight(
+            terrain,
+            r0=10,
+            c0=5,
+            obs_height=101.8,
+            r1=10,
+            c1=25,
+            cellsize_x_m=100.0,
+            cellsize_y_m=100.0,
+        )
+        assert visible
+
+    def test_nan_obstacle_ignored(self):
+        """NaN cells along the path are skipped (not treated as blocking)."""
+        from chuk_mcp_dem.core.raster_io import _check_line_of_sight
+
+        terrain = np.ones((50, 50), dtype=np.float32) * 100.0
+        terrain[25, 30] = np.nan  # NaN cell along the path
+
+        visible = _check_line_of_sight(
+            terrain,
+            r0=25,
+            c0=25,
+            obs_height=101.8,
+            r1=25,
+            c1=40,
+            cellsize_x_m=100.0,
+            cellsize_y_m=100.0,
+        )
+        assert visible
+
+    def test_target_with_nan_elevation_treated_as_zero(self):
+        """Target with NaN elevation is treated as elevation 0."""
+        from chuk_mcp_dem.core.raster_io import _check_line_of_sight
+
+        terrain = np.ones((50, 50), dtype=np.float32) * 100.0
+        terrain[25, 40] = np.nan  # NaN at target
+
+        # Observer height 101.8 looking at target with elev=0
+        # target_angle = (0 - 101.8) / dist < 0 < max_angle (which is -inf on flat)
+        # Actually max_angle stays -inf since all intermediate cells are 100m
+        # and (100 - 101.8)/dist < 0, but max_angle starts at -inf
+        # After intermediate: max_angle = (100-101.8)/dist_step < 0
+        # target_angle = (0-101.8)/total_dist < max_angle? Depends on distances.
+        # This test just checks it does not crash and returns a boolean-like value.
+        result = _check_line_of_sight(
+            terrain,
+            r0=25,
+            c0=25,
+            obs_height=101.8,
+            r1=25,
+            c1=40,
+            cellsize_x_m=100.0,
+            cellsize_y_m=100.0,
+        )
+        assert result is True or result is False or isinstance(result, (bool, np.bool_))

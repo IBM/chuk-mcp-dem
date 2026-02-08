@@ -15,9 +15,16 @@ from typing import Any
 import numpy as np
 
 from ..constants import (
+    DEFAULT_ALTITUDE,
+    DEFAULT_AZIMUTH,
+    DEFAULT_FLAT_VALUE,
     DEFAULT_INTERPOLATION,
+    DEFAULT_NUM_POINTS,
+    DEFAULT_OBSERVER_HEIGHT_M,
     DEFAULT_SOURCE,
+    DEFAULT_Z_FACTOR,
     DEM_SOURCES,
+    MAX_VIEWSHED_RADIUS_M,
     TILE_CACHE_MAX_BYTES,
     TILE_CACHE_MAX_ITEM,
     ErrorMessages,
@@ -54,6 +61,47 @@ class MultiPointResult:
 
     elevations: list[float]
     elevation_range: list[float]
+
+
+@dataclass
+class TerrainResult:
+    """Result of a terrain derivative computation (hillshade/slope/aspect)."""
+
+    artifact_ref: str
+    preview_ref: str | None
+    crs: str
+    resolution_m: float
+    shape: list[int]
+    value_range: list[float]
+    dtype: str
+
+
+@dataclass
+class ProfileResult:
+    """Result of an elevation profile extraction."""
+
+    longitudes: list[float]
+    latitudes: list[float]
+    distances_m: list[float]
+    elevations: list[float]
+    total_distance_m: float
+    elevation_range: list[float]
+    elevation_gain_m: float
+    elevation_loss_m: float
+
+
+@dataclass
+class ViewshedResult:
+    """Result of a viewshed analysis."""
+
+    artifact_ref: str
+    preview_ref: str | None
+    crs: str
+    resolution_m: float
+    shape: list[int]
+    visible_percentage: float
+    observer_elevation_m: float
+    radius_m: float
 
 
 class DEMManager:
@@ -366,6 +414,444 @@ class DEMManager:
         return MultiPointResult(
             elevations=values,
             elevation_range=elev_range,
+        )
+
+    # ------------------------------------------------------------------
+    # Terrain analysis (async)
+    # ------------------------------------------------------------------
+
+    async def fetch_hillshade(
+        self,
+        bbox: list[float],
+        source: str = DEFAULT_SOURCE,
+        azimuth: float = DEFAULT_AZIMUTH,
+        altitude: float = DEFAULT_ALTITUDE,
+        z_factor: float = DEFAULT_Z_FACTOR,
+        output_format: str = "geotiff",
+    ) -> TerrainResult:
+        """Compute hillshade for a bounding box."""
+        from . import raster_io
+
+        self._validate_bbox(bbox)
+        src = self._get_source(source)
+
+        tile_urls = self._get_tile_urls(source, bbox)
+        if not tile_urls:
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src["name"], bbox))
+
+        elevation, crs, transform = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, tile_urls, bbox
+        )
+
+        hillshade = await asyncio.to_thread(
+            raster_io.compute_hillshade, elevation, transform, azimuth, altitude, z_factor
+        )
+
+        val_min = float(np.nanmin(hillshade))
+        val_max = float(np.nanmax(hillshade))
+
+        if output_format == "png":
+            data_bytes = await asyncio.to_thread(
+                raster_io.elevation_to_hillshade_png, elevation, transform
+            )
+            suffix = ".png"
+        else:
+            data_bytes = await asyncio.to_thread(
+                raster_io.arrays_to_geotiff, hillshade, crs, transform, "float32"
+            )
+            suffix = ".tif"
+
+        preview_ref = None
+        if output_format != "png":
+            try:
+                preview_bytes = await asyncio.to_thread(
+                    raster_io.elevation_to_hillshade_png, elevation, transform
+                )
+                preview_ref = await self._store_raster(
+                    preview_bytes,
+                    {"type": "hillshade_preview", "source": source, "format": "png"},
+                    suffix="_hillshade.png",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate hillshade preview: {e}")
+
+        artifact_ref = await self._store_raster(
+            data_bytes,
+            {
+                "schema_version": "1.0",
+                "type": "hillshade",
+                "source": source,
+                "bbox": bbox,
+                "crs": str(crs),
+                "resolution_m": src["resolution_m"],
+                "azimuth": azimuth,
+                "altitude": altitude,
+                "z_factor": z_factor,
+                "shape": list(hillshade.shape),
+            },
+            suffix=suffix,
+        )
+
+        return TerrainResult(
+            artifact_ref=artifact_ref,
+            preview_ref=preview_ref,
+            crs=str(crs),
+            resolution_m=src["resolution_m"],
+            shape=list(hillshade.shape),
+            value_range=[val_min, val_max],
+            dtype="float32",
+        )
+
+    async def fetch_slope(
+        self,
+        bbox: list[float],
+        source: str = DEFAULT_SOURCE,
+        units: str = "degrees",
+        output_format: str = "geotiff",
+    ) -> TerrainResult:
+        """Compute slope for a bounding box."""
+        from . import raster_io
+
+        self._validate_bbox(bbox)
+        src = self._get_source(source)
+
+        tile_urls = self._get_tile_urls(source, bbox)
+        if not tile_urls:
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src["name"], bbox))
+
+        elevation, crs, transform = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, tile_urls, bbox
+        )
+
+        slope = await asyncio.to_thread(raster_io.compute_slope, elevation, transform, units)
+
+        val_min = float(np.nanmin(slope))
+        val_max = float(np.nanmax(slope))
+
+        if output_format == "png":
+            data_bytes = await asyncio.to_thread(raster_io.slope_to_png, slope, units)
+            suffix = ".png"
+        else:
+            data_bytes = await asyncio.to_thread(
+                raster_io.arrays_to_geotiff, slope, crs, transform, "float32"
+            )
+            suffix = ".tif"
+
+        preview_ref = None
+        if output_format != "png":
+            try:
+                preview_bytes = await asyncio.to_thread(raster_io.slope_to_png, slope, units)
+                preview_ref = await self._store_raster(
+                    preview_bytes,
+                    {"type": "slope_preview", "source": source, "format": "png"},
+                    suffix="_slope.png",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate slope preview: {e}")
+
+        artifact_ref = await self._store_raster(
+            data_bytes,
+            {
+                "schema_version": "1.0",
+                "type": "slope",
+                "source": source,
+                "bbox": bbox,
+                "crs": str(crs),
+                "resolution_m": src["resolution_m"],
+                "units": units,
+                "shape": list(slope.shape),
+            },
+            suffix=suffix,
+        )
+
+        return TerrainResult(
+            artifact_ref=artifact_ref,
+            preview_ref=preview_ref,
+            crs=str(crs),
+            resolution_m=src["resolution_m"],
+            shape=list(slope.shape),
+            value_range=[val_min, val_max],
+            dtype="float32",
+        )
+
+    async def fetch_aspect(
+        self,
+        bbox: list[float],
+        source: str = DEFAULT_SOURCE,
+        flat_value: float = DEFAULT_FLAT_VALUE,
+        output_format: str = "geotiff",
+    ) -> TerrainResult:
+        """Compute aspect for a bounding box."""
+        from . import raster_io
+
+        self._validate_bbox(bbox)
+        src = self._get_source(source)
+
+        tile_urls = self._get_tile_urls(source, bbox)
+        if not tile_urls:
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src["name"], bbox))
+
+        elevation, crs, transform = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, tile_urls, bbox
+        )
+
+        aspect = await asyncio.to_thread(raster_io.compute_aspect, elevation, transform, flat_value)
+
+        val_min = float(np.nanmin(aspect))
+        val_max = float(np.nanmax(aspect))
+
+        if output_format == "png":
+            data_bytes = await asyncio.to_thread(raster_io.aspect_to_png, aspect, flat_value)
+            suffix = ".png"
+        else:
+            data_bytes = await asyncio.to_thread(
+                raster_io.arrays_to_geotiff, aspect, crs, transform, "float32"
+            )
+            suffix = ".tif"
+
+        preview_ref = None
+        if output_format != "png":
+            try:
+                preview_bytes = await asyncio.to_thread(raster_io.aspect_to_png, aspect, flat_value)
+                preview_ref = await self._store_raster(
+                    preview_bytes,
+                    {"type": "aspect_preview", "source": source, "format": "png"},
+                    suffix="_aspect.png",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate aspect preview: {e}")
+
+        artifact_ref = await self._store_raster(
+            data_bytes,
+            {
+                "schema_version": "1.0",
+                "type": "aspect",
+                "source": source,
+                "bbox": bbox,
+                "crs": str(crs),
+                "resolution_m": src["resolution_m"],
+                "flat_value": flat_value,
+                "shape": list(aspect.shape),
+            },
+            suffix=suffix,
+        )
+
+        return TerrainResult(
+            artifact_ref=artifact_ref,
+            preview_ref=preview_ref,
+            crs=str(crs),
+            resolution_m=src["resolution_m"],
+            shape=list(aspect.shape),
+            value_range=[val_min, val_max],
+            dtype="float32",
+        )
+
+    # ------------------------------------------------------------------
+    # Profile & viewshed (async)
+    # ------------------------------------------------------------------
+
+    async def fetch_profile(
+        self,
+        start: list[float],
+        end: list[float],
+        source: str = DEFAULT_SOURCE,
+        num_points: int = DEFAULT_NUM_POINTS,
+        interpolation: str = DEFAULT_INTERPOLATION,
+    ) -> ProfileResult:
+        """Extract an elevation profile between two points."""
+        from . import raster_io
+
+        src = self._get_source(source)
+
+        all_lons = [start[0], end[0]]
+        all_lats = [start[1], end[1]]
+        bbox: list[float] = [
+            float(math.floor(min(all_lons))),
+            float(math.floor(min(all_lats))),
+            float(math.ceil(max(all_lons))),
+            float(math.ceil(max(all_lats))),
+        ]
+
+        tile_urls = self._get_tile_urls(source, bbox)
+        if not tile_urls:
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src["name"], bbox))
+
+        elevation, crs, transform = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, tile_urls, None
+        )
+
+        lons, lats, distances, elevations = await asyncio.to_thread(
+            raster_io.compute_profile_points,
+            elevation,
+            transform,
+            start,
+            end,
+            num_points,
+            interpolation,
+        )
+
+        valid_elevs = [e for e in elevations if not math.isnan(e)]
+        if valid_elevs:
+            elev_range = [min(valid_elevs), max(valid_elevs)]
+        else:
+            elev_range = [0.0, 0.0]
+
+        gain = 0.0
+        loss = 0.0
+        for i in range(1, len(elevations)):
+            if math.isnan(elevations[i]) or math.isnan(elevations[i - 1]):
+                continue
+            diff = elevations[i] - elevations[i - 1]
+            if diff > 0:
+                gain += diff
+            else:
+                loss += abs(diff)
+
+        total_distance = distances[-1] if distances else 0.0
+
+        return ProfileResult(
+            longitudes=lons,
+            latitudes=lats,
+            distances_m=distances,
+            elevations=elevations,
+            total_distance_m=total_distance,
+            elevation_range=elev_range,
+            elevation_gain_m=round(gain, 1),
+            elevation_loss_m=round(loss, 1),
+        )
+
+    async def fetch_viewshed(
+        self,
+        observer: list[float],
+        radius_m: float,
+        source: str = DEFAULT_SOURCE,
+        observer_height_m: float = DEFAULT_OBSERVER_HEIGHT_M,
+        output_format: str = "geotiff",
+    ) -> ViewshedResult:
+        """Compute viewshed from an observer point."""
+        from . import raster_io
+
+        src = self._get_source(source)
+
+        if radius_m > MAX_VIEWSHED_RADIUS_M:
+            raise ValueError(ErrorMessages.RADIUS_TOO_LARGE.format(radius_m, MAX_VIEWSHED_RADIUS_M))
+
+        observer_lon, observer_lat = observer
+        mid_lat = observer_lat
+        deg_per_m_lon = 1.0 / (111320.0 * math.cos(math.radians(mid_lat)))
+        deg_per_m_lat = 1.0 / 111320.0
+
+        buffer_lon = radius_m * deg_per_m_lon
+        buffer_lat = radius_m * deg_per_m_lat
+
+        bbox: list[float] = [
+            float(math.floor(observer_lon - buffer_lon)),
+            float(math.floor(observer_lat - buffer_lat)),
+            float(math.ceil(observer_lon + buffer_lon)),
+            float(math.ceil(observer_lat + buffer_lat)),
+        ]
+
+        tile_urls = self._get_tile_urls(source, bbox)
+        if not tile_urls:
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src["name"], bbox))
+
+        elevation, crs, transform = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, tile_urls, None
+        )
+
+        viewshed = await asyncio.to_thread(
+            raster_io.compute_viewshed,
+            elevation,
+            transform,
+            observer_lon,
+            observer_lat,
+            radius_m,
+            observer_height_m,
+        )
+
+        analyzed = viewshed[~np.isnan(viewshed)]
+        if len(analyzed) > 0:
+            visible_pct = float(np.sum(analyzed == 1.0) / len(analyzed) * 100.0)
+        else:
+            visible_pct = 0.0
+
+        # Get observer ground elevation
+        col_f, row_f = ~transform * (observer_lon, observer_lat)
+        obs_row = int(round(row_f))
+        obs_col = int(round(col_f))
+        h, w = elevation.shape
+        if 0 <= obs_row < h and 0 <= obs_col < w:
+            obs_elev = float(elevation[obs_row, obs_col])
+            if math.isnan(obs_elev):
+                obs_elev = 0.0
+        else:
+            obs_elev = 0.0
+
+        if output_format == "png":
+            vis_rgb = np.zeros((*viewshed.shape, 3), dtype=np.uint8)
+            vis_rgb[viewshed == 1.0] = [0, 200, 0]
+            vis_rgb[viewshed == 0.0] = [200, 0, 0]
+            from PIL import Image
+            import io as _io
+
+            img = Image.fromarray(vis_rgb, mode="RGB")
+            buf = _io.BytesIO()
+            img.save(buf, format="PNG")
+            data_bytes = buf.getvalue()
+            suffix = ".png"
+        else:
+            data_bytes = await asyncio.to_thread(
+                raster_io.arrays_to_geotiff, viewshed, crs, transform, "float32"
+            )
+            suffix = ".tif"
+
+        preview_ref = None
+        if output_format != "png":
+            try:
+                vis_rgb = np.zeros((*viewshed.shape, 3), dtype=np.uint8)
+                vis_rgb[viewshed == 1.0] = [0, 200, 0]
+                vis_rgb[viewshed == 0.0] = [200, 0, 0]
+                from PIL import Image
+                import io as _io
+
+                img = Image.fromarray(vis_rgb, mode="RGB")
+                buf = _io.BytesIO()
+                img.save(buf, format="PNG")
+                preview_bytes = buf.getvalue()
+                preview_ref = await self._store_raster(
+                    preview_bytes,
+                    {"type": "viewshed_preview", "source": source, "format": "png"},
+                    suffix="_viewshed.png",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate viewshed preview: {e}")
+
+        artifact_ref = await self._store_raster(
+            data_bytes,
+            {
+                "schema_version": "1.0",
+                "type": "viewshed",
+                "source": source,
+                "observer": observer,
+                "radius_m": radius_m,
+                "observer_height_m": observer_height_m,
+                "crs": str(crs),
+                "resolution_m": src["resolution_m"],
+                "shape": list(viewshed.shape),
+                "visible_percentage": round(visible_pct, 1),
+            },
+            suffix=suffix,
+        )
+
+        return ViewshedResult(
+            artifact_ref=artifact_ref,
+            preview_ref=preview_ref,
+            crs=str(crs),
+            resolution_m=src["resolution_m"],
+            shape=list(viewshed.shape),
+            visible_percentage=round(visible_pct, 1),
+            observer_elevation_m=obs_elev,
+            radius_m=radius_m,
         )
 
     # ------------------------------------------------------------------

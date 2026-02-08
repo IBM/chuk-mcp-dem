@@ -546,10 +546,10 @@ class TestDemCapabilities:
         data = json.loads(result)
         assert len(data["output_formats"]) == 2
 
-    async def test_tool_count_is_nine(self, discovery_tools):
+    async def test_tool_count_is_fourteen(self, discovery_tools):
         result = await discovery_tools["dem_capabilities"](output_mode="json")
         data = json.loads(result)
-        assert data["tool_count"] == 9
+        assert data["tool_count"] == 14
 
     async def test_llm_guidance_present(self, discovery_tools):
         result = await discovery_tools["dem_capabilities"](output_mode="json")

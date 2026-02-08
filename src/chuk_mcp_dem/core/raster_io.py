@@ -368,6 +368,105 @@ def elevation_to_terrain_png(
     return buf.getvalue()
 
 
+def slope_to_png(
+    slope: FloatArray,
+    units: str = "degrees",
+) -> bytes:
+    """Generate a slope PNG with green-yellow-red colour ramp.
+
+    Args:
+        slope: 2D slope array (degrees or percent)
+        units: "degrees" or "percent"
+
+    Returns:
+        PNG bytes
+    """
+    max_val = 90.0 if units == "degrees" else 200.0
+    norm = np.clip(np.nan_to_num(slope, nan=0.0) / max_val, 0.0, 1.0)
+
+    # Green (flat) -> Yellow (moderate) -> Red (steep)
+    r = np.clip(norm * 2.0, 0, 1) * 255
+    g = np.clip(2.0 - norm * 2.0, 0, 1) * 255
+    b = np.zeros_like(norm)
+
+    rgb = np.stack([r, g, b], axis=-1).astype(np.uint8)
+    img = Image.fromarray(rgb, mode="RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def aspect_to_png(
+    aspect: FloatArray,
+    flat_value: float = -1.0,
+) -> bytes:
+    """Generate an aspect PNG with HSV colour wheel, flat areas grey.
+
+    Args:
+        aspect: 2D aspect array in degrees (0-360, flat_value for flat)
+        flat_value: Value used for flat areas
+
+    Returns:
+        PNG bytes
+    """
+    h, w = aspect.shape
+    rgb = np.zeros((h, w, 3), dtype=np.uint8)
+
+    flat_mask = aspect == flat_value
+    valid_mask = ~flat_mask
+
+    if np.any(valid_mask):
+        hue = aspect[valid_mask] / 360.0
+        # HSV to RGB: S=0.8, V=0.9
+        hue6 = hue * 6.0
+        sector = np.floor(hue6).astype(int) % 6
+        f = hue6 - np.floor(hue6)
+        v = 230  # 0.9 * 255
+        p = int(230 * 0.2)  # v * (1 - s)
+        q = (230 * (1.0 - 0.8 * f)).astype(np.uint8)
+        t = (230 * (1.0 - 0.8 * (1.0 - f))).astype(np.uint8)
+
+        r_vals = np.where(
+            sector == 0,
+            v,
+            np.where(
+                sector == 1,
+                q,
+                np.where(sector == 2, p, np.where(sector == 3, p, np.where(sector == 4, t, v))),
+            ),
+        )
+        g_vals = np.where(
+            sector == 0,
+            t,
+            np.where(
+                sector == 1,
+                v,
+                np.where(sector == 2, v, np.where(sector == 3, q, np.where(sector == 4, p, p))),
+            ),
+        )
+        b_vals = np.where(
+            sector == 0,
+            p,
+            np.where(
+                sector == 1,
+                p,
+                np.where(sector == 2, t, np.where(sector == 3, v, np.where(sector == 4, v, q))),
+            ),
+        )
+
+        rgb[valid_mask, 0] = np.clip(r_vals, 0, 255).astype(np.uint8)
+        rgb[valid_mask, 1] = np.clip(g_vals, 0, 255).astype(np.uint8)
+        rgb[valid_mask, 2] = np.clip(b_vals, 0, 255).astype(np.uint8)
+
+    # Flat areas are grey
+    rgb[flat_mask] = [128, 128, 128]
+
+    img = Image.fromarray(rgb, mode="RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # Terrain derivatives
 # ---------------------------------------------------------------------------
@@ -438,8 +537,223 @@ def compute_aspect(
 
 
 # ---------------------------------------------------------------------------
+# Profile & viewshed
+# ---------------------------------------------------------------------------
+
+
+def compute_profile_points(
+    elevation: FloatArray,
+    transform: Transform,
+    start: list[float],
+    end: list[float],
+    num_points: int = 100,
+    interpolation: str = "bilinear",
+) -> tuple[list[float], list[float], list[float], list[float]]:
+    """Sample elevation along a line between two points.
+
+    Args:
+        elevation: 2D elevation array
+        transform: Affine transform
+        start: [lon, lat] start point
+        end: [lon, lat] end point
+        num_points: Number of sample points along the line
+        interpolation: Interpolation method for sampling
+
+    Returns:
+        Tuple of (lons, lats, distances_m, elevations)
+    """
+    lons = np.linspace(start[0], end[0], num_points).tolist()
+    lats = np.linspace(start[1], end[1], num_points).tolist()
+
+    distances: list[float] = [0.0]
+    for i in range(1, num_points):
+        d = _haversine(lats[i - 1], lons[i - 1], lats[i], lons[i])
+        distances.append(distances[-1] + d)
+
+    elevations = [
+        sample_elevation(elevation, transform, lons[i], lats[i], interpolation)
+        for i in range(num_points)
+    ]
+
+    return lons, lats, distances, elevations
+
+
+def compute_viewshed(
+    elevation: FloatArray,
+    transform: Transform,
+    observer_lon: float,
+    observer_lat: float,
+    radius_m: float,
+    observer_height_m: float = 1.8,
+) -> FloatArray:
+    """Compute viewshed (visible area) from an observer point.
+
+    Uses DDA ray-casting to check line of sight from observer to every
+    cell within the specified radius.
+
+    Args:
+        elevation: 2D elevation array
+        transform: Affine transform
+        observer_lon: Observer longitude
+        observer_lat: Observer latitude
+        radius_m: Maximum analysis radius in metres
+        observer_height_m: Observer height above ground in metres
+
+    Returns:
+        2D array: 1.0=visible, 0.0=hidden, NaN=outside radius
+    """
+    h, w = elevation.shape
+
+    col_f, row_f = ~transform * (observer_lon, observer_lat)
+    obs_row = int(round(row_f))
+    obs_col = int(round(col_f))
+
+    cellsize_x = abs(transform[0])
+    cellsize_y = abs(transform[4])
+
+    mid_lat = observer_lat
+    cellsize_x_m = cellsize_x * 111320.0 * math.cos(math.radians(mid_lat))
+    cellsize_y_m = cellsize_y * 111320.0
+
+    radius_cells_x = int(radius_m / cellsize_x_m) + 1
+    radius_cells_y = int(radius_m / cellsize_y_m) + 1
+
+    result = np.full((h, w), np.nan, dtype=np.float32)
+
+    if 0 <= obs_row < h and 0 <= obs_col < w:
+        obs_elev = elevation[obs_row, obs_col]
+        if np.isnan(obs_elev):
+            obs_elev = 0.0
+        obs_height = obs_elev + observer_height_m
+        result[obs_row, obs_col] = 1.0
+
+        r_start = max(0, obs_row - radius_cells_y)
+        r_end = min(h, obs_row + radius_cells_y + 1)
+        c_start = max(0, obs_col - radius_cells_x)
+        c_end = min(w, obs_col + radius_cells_x + 1)
+
+        for r in range(r_start, r_end):
+            for c in range(c_start, c_end):
+                if r == obs_row and c == obs_col:
+                    continue
+
+                dr = (r - obs_row) * cellsize_y_m
+                dc = (c - obs_col) * cellsize_x_m
+                dist = math.sqrt(dr * dr + dc * dc)
+
+                if dist > radius_m:
+                    continue
+
+                visible = _check_line_of_sight(
+                    elevation,
+                    obs_row,
+                    obs_col,
+                    obs_height,
+                    r,
+                    c,
+                    cellsize_x_m,
+                    cellsize_y_m,
+                )
+                result[r, c] = 1.0 if visible else 0.0
+
+    return result
+
+
+def _check_line_of_sight(
+    elevation: FloatArray,
+    r0: int,
+    c0: int,
+    obs_height: float,
+    r1: int,
+    c1: int,
+    cellsize_x_m: float,
+    cellsize_y_m: float,
+) -> bool:
+    """Check line of sight between observer and target using DDA.
+
+    Args:
+        elevation: 2D elevation array
+        r0, c0: Observer row/col
+        obs_height: Observer absolute height (ground + observer_height_m)
+        r1, c1: Target row/col
+        cellsize_x_m: Cell width in metres
+        cellsize_y_m: Cell height in metres
+
+    Returns:
+        True if target is visible from observer
+    """
+    h, w = elevation.shape
+    dr = r1 - r0
+    dc = c1 - c0
+    steps = max(abs(dr), abs(dc))
+
+    if steps == 0:
+        return True
+
+    target_elev = elevation[r1, c1]
+    if np.isnan(target_elev):
+        target_elev = 0.0
+
+    total_dx_m = dc * cellsize_x_m
+    total_dy_m = dr * cellsize_y_m
+    total_dist = math.sqrt(total_dx_m**2 + total_dy_m**2)
+
+    if total_dist == 0:
+        return True
+
+    max_angle = -math.inf
+
+    for step in range(1, steps):
+        t = step / steps
+        ri = int(round(r0 + dr * t))
+        ci = int(round(c0 + dc * t))
+
+        if ri < 0 or ri >= h or ci < 0 or ci >= w:
+            continue
+
+        cell_elev = elevation[ri, ci]
+        if np.isnan(cell_elev):
+            continue
+
+        dx_m = (ci - c0) * cellsize_x_m
+        dy_m = (ri - r0) * cellsize_y_m
+        dist = math.sqrt(dx_m**2 + dy_m**2)
+
+        if dist == 0:
+            continue
+
+        angle = (cell_elev - obs_height) / dist
+        if angle > max_angle:
+            max_angle = angle
+
+    target_angle = (target_elev - obs_height) / total_dist
+    return target_angle >= max_angle
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Compute great-circle distance between two points in metres.
+
+    Args:
+        lat1, lon1: First point (degrees)
+        lat2, lon2: Second point (degrees)
+
+    Returns:
+        Distance in metres
+    """
+    r = 6371000.0  # Earth radius in metres
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return r * c
 
 
 def _reproject_bbox(bbox_4326: list[float], dst_crs: Any) -> tuple[float, float, float, float]:

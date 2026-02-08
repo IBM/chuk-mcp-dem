@@ -13,7 +13,15 @@ import pytest
 from chuk_mcp_dem.constants import (
     DEM_SOURCES,
 )
-from chuk_mcp_dem.core.dem_manager import DEMManager, FetchResult, MultiPointResult, PointResult
+from chuk_mcp_dem.core.dem_manager import (
+    DEMManager,
+    FetchResult,
+    MultiPointResult,
+    PointResult,
+    ProfileResult,
+    TerrainResult,
+    ViewshedResult,
+)
 
 
 # ===================================================================
@@ -665,3 +673,621 @@ class TestDataclasses:
             elevation_range=[100.0, 200.0],
         )
         assert len(result.elevations) == 2
+
+    def test_terrain_result_fields(self):
+        result = TerrainResult(
+            artifact_ref="dem/hs_abc.tif",
+            preview_ref="dem/hs_abc_preview.png",
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            value_range=[0.0, 254.0],
+            dtype="float32",
+        )
+        assert result.artifact_ref == "dem/hs_abc.tif"
+        assert result.preview_ref == "dem/hs_abc_preview.png"
+        assert result.dtype == "float32"
+
+    def test_terrain_result_no_preview(self):
+        result = TerrainResult(
+            artifact_ref="dem/slope.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[50, 50],
+            value_range=[0.0, 89.0],
+            dtype="float32",
+        )
+        assert result.preview_ref is None
+
+    def test_profile_result_fields(self):
+        result = ProfileResult(
+            longitudes=[7.0, 7.5, 8.0],
+            latitudes=[46.0, 46.5, 47.0],
+            distances_m=[0.0, 5000.0, 10000.0],
+            elevations=[1000.0, 1500.0, 1200.0],
+            total_distance_m=10000.0,
+            elevation_range=[1000.0, 1500.0],
+            elevation_gain_m=500.0,
+            elevation_loss_m=300.0,
+        )
+        assert len(result.longitudes) == 3
+        assert result.total_distance_m == 10000.0
+        assert result.elevation_gain_m == 500.0
+        assert result.elevation_loss_m == 300.0
+
+    def test_viewshed_result_fields(self):
+        result = ViewshedResult(
+            artifact_ref="dem/vs_abc.tif",
+            preview_ref="dem/vs_preview.png",
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[200, 200],
+            visible_percentage=45.2,
+            observer_elevation_m=1500.0,
+            radius_m=5000.0,
+        )
+        assert result.artifact_ref == "dem/vs_abc.tif"
+        assert result.visible_percentage == 45.2
+        assert result.observer_elevation_m == 1500.0
+        assert result.radius_m == 5000.0
+
+    def test_viewshed_result_no_preview(self):
+        result = ViewshedResult(
+            artifact_ref="dem/vs.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            visible_percentage=0.0,
+            observer_elevation_m=0.0,
+            radius_m=1000.0,
+        )
+        assert result.preview_ref is None
+
+
+# ===================================================================
+# Terrain analysis: fetch_hillshade
+# ===================================================================
+
+
+class TestFetchHillshade:
+    """Tests for DEMManager.fetch_hillshade()."""
+
+    async def test_fetch_hillshade_success(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        hillshade_arr = np.ones((100, 100), dtype=np.float32) * 127.0
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_hillshade",
+                return_value=hillshade_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.elevation_to_hillshade_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_hillshade(bbox=[7.0, 46.0, 8.0, 47.0], source="cop30")
+
+        assert isinstance(result, TerrainResult)
+        assert result.artifact_ref.startswith("dem/")
+        assert result.crs == str(sample_crs)
+        assert result.resolution_m == 30
+        assert result.shape == [100, 100]
+        assert result.dtype == "float32"
+
+    async def test_fetch_hillshade_invalid_source(self, mock_manager):
+        with pytest.raises(ValueError, match="Unknown DEM source"):
+            await mock_manager.fetch_hillshade(bbox=[7.0, 46.0, 8.0, 47.0], source="bad_source")
+
+    async def test_fetch_hillshade_custom_params(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        hillshade_arr = np.ones((100, 100), dtype=np.float32) * 200.0
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_hillshade",
+                return_value=hillshade_arr,
+            ) as mock_hs,
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.elevation_to_hillshade_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_hillshade(
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                source="cop30",
+                azimuth=180.0,
+                altitude=30.0,
+                z_factor=2.0,
+            )
+
+        # Verify custom params were passed to compute_hillshade
+        mock_hs.assert_called_once()
+        call_args = mock_hs.call_args
+        assert call_args[0][2] == 180.0  # azimuth
+        assert call_args[0][3] == 30.0  # altitude
+        assert call_args[0][4] == 2.0  # z_factor
+        assert result.value_range == [200.0, 200.0]
+
+    async def test_fetch_hillshade_value_range(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        hillshade_arr = np.array([[10.0, 250.0], [50.0, 200.0]], dtype=np.float32)
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_hillshade",
+                return_value=hillshade_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.elevation_to_hillshade_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_hillshade(bbox=[7.0, 46.0, 8.0, 47.0], source="cop30")
+
+        assert result.value_range[0] == pytest.approx(10.0)
+        assert result.value_range[1] == pytest.approx(250.0)
+
+    async def test_fetch_hillshade_no_coverage(self, mock_manager):
+        """Source with no tile URL constructor returns empty tile_urls."""
+        with pytest.raises(ValueError, match="does not cover"):
+            await mock_manager.fetch_hillshade(bbox=[7.0, 46.0, 8.0, 47.0], source="srtm")
+
+    async def test_fetch_hillshade_png_output(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        hillshade_arr = np.ones((100, 100), dtype=np.float32) * 127.0
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_hillshade",
+                return_value=hillshade_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.elevation_to_hillshade_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_hillshade(
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                source="cop30",
+                output_format="png",
+            )
+
+        assert result.artifact_ref.endswith(".png")
+        # No separate preview for png output
+        assert result.preview_ref is None
+
+
+# ===================================================================
+# Terrain analysis: fetch_slope
+# ===================================================================
+
+
+class TestFetchSlope:
+    """Tests for DEMManager.fetch_slope()."""
+
+    async def test_fetch_slope_success(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        slope_arr = np.ones((100, 100), dtype=np.float32) * 15.0
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_slope",
+                return_value=slope_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.slope_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_slope(bbox=[7.0, 46.0, 8.0, 47.0], source="cop30")
+
+        assert isinstance(result, TerrainResult)
+        assert result.artifact_ref.startswith("dem/")
+        assert result.crs == str(sample_crs)
+        assert result.resolution_m == 30
+        assert result.value_range == [15.0, 15.0]
+
+    async def test_fetch_slope_default_units(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        slope_arr = np.ones((100, 100), dtype=np.float32) * 20.0
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_slope",
+                return_value=slope_arr,
+            ) as mock_slope,
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.slope_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            await mock_manager.fetch_slope(bbox=[7.0, 46.0, 8.0, 47.0], source="cop30")
+
+        # Default units is "degrees"
+        mock_slope.assert_called_once()
+        assert mock_slope.call_args[0][2] == "degrees"
+
+    async def test_fetch_slope_custom_units(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        slope_arr = np.ones((100, 100), dtype=np.float32) * 50.0
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_slope",
+                return_value=slope_arr,
+            ) as mock_slope,
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.slope_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            await mock_manager.fetch_slope(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30", units="percent"
+            )
+
+        mock_slope.assert_called_once()
+        assert mock_slope.call_args[0][2] == "percent"
+
+    async def test_fetch_slope_invalid_source(self, mock_manager):
+        with pytest.raises(ValueError, match="Unknown DEM source"):
+            await mock_manager.fetch_slope(bbox=[7.0, 46.0, 8.0, 47.0], source="nonexistent")
+
+
+# ===================================================================
+# Terrain analysis: fetch_aspect
+# ===================================================================
+
+
+class TestFetchAspect:
+    """Tests for DEMManager.fetch_aspect()."""
+
+    async def test_fetch_aspect_success(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        aspect_arr = np.ones((100, 100), dtype=np.float32) * 180.0
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_aspect",
+                return_value=aspect_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.aspect_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_aspect(bbox=[7.0, 46.0, 8.0, 47.0], source="cop30")
+
+        assert isinstance(result, TerrainResult)
+        assert result.artifact_ref.startswith("dem/")
+        assert result.crs == str(sample_crs)
+        assert result.value_range == [180.0, 180.0]
+
+    async def test_fetch_aspect_custom_flat_value(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        aspect_arr = np.ones((100, 100), dtype=np.float32) * 90.0
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_aspect",
+                return_value=aspect_arr,
+            ) as mock_asp,
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.aspect_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            await mock_manager.fetch_aspect(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30", flat_value=-9999.0
+            )
+
+        mock_asp.assert_called_once()
+        assert mock_asp.call_args[0][2] == -9999.0
+
+    async def test_fetch_aspect_invalid_source(self, mock_manager):
+        with pytest.raises(ValueError, match="Unknown DEM source"):
+            await mock_manager.fetch_aspect(bbox=[7.0, 46.0, 8.0, 47.0], source="bad")
+
+
+# ===================================================================
+# Profile: fetch_profile
+# ===================================================================
+
+
+class TestFetchProfile:
+    """Tests for DEMManager.fetch_profile()."""
+
+    async def test_fetch_profile_success(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        mock_lons = [7.0, 7.5, 8.0]
+        mock_lats = [46.0, 46.5, 47.0]
+        mock_distances = [0.0, 5000.0, 10000.0]
+        mock_elevations = [1000.0, 1500.0, 1200.0]
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_profile_points",
+                return_value=(mock_lons, mock_lats, mock_distances, mock_elevations),
+            ),
+        ):
+            result = await mock_manager.fetch_profile(
+                start=[7.0, 46.0], end=[8.0, 47.0], source="cop30", num_points=3
+            )
+
+        assert isinstance(result, ProfileResult)
+        assert result.longitudes == mock_lons
+        assert result.latitudes == mock_lats
+        assert result.distances_m == mock_distances
+        assert result.elevations == mock_elevations
+        assert result.total_distance_m == 10000.0
+        assert result.elevation_range == [1000.0, 1500.0]
+
+    async def test_fetch_profile_gain_loss(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        """Verify gain and loss are computed correctly."""
+        # Elevation goes: 100 -> 300 -> 200 -> 400
+        # gain = (300-100) + (400-200) = 200 + 200 = 400
+        # loss = (200-300) = 100
+        mock_elevations = [100.0, 300.0, 200.0, 400.0]
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_profile_points",
+                return_value=(
+                    [7.0, 7.33, 7.66, 8.0],
+                    [46.0, 46.33, 46.66, 47.0],
+                    [0.0, 3000.0, 6000.0, 10000.0],
+                    mock_elevations,
+                ),
+            ),
+        ):
+            result = await mock_manager.fetch_profile(
+                start=[7.0, 46.0], end=[8.0, 47.0], source="cop30", num_points=4
+            )
+
+        assert result.elevation_gain_m == pytest.approx(400.0)
+        assert result.elevation_loss_m == pytest.approx(100.0)
+
+    async def test_fetch_profile_invalid_source(self, mock_manager):
+        with pytest.raises(ValueError, match="Unknown DEM source"):
+            await mock_manager.fetch_profile(
+                start=[7.0, 46.0], end=[8.0, 47.0], source="nonexistent"
+            )
+
+    async def test_fetch_profile_no_coverage(self, mock_manager):
+        """Source with no tile URL constructor raises."""
+        with pytest.raises(ValueError, match="does not cover"):
+            await mock_manager.fetch_profile(start=[7.0, 46.0], end=[8.0, 47.0], source="srtm")
+
+    async def test_fetch_profile_all_nan(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        """When all elevations are NaN, range defaults to [0.0, 0.0]."""
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_profile_points",
+                return_value=(
+                    [7.0, 8.0],
+                    [46.0, 47.0],
+                    [0.0, 10000.0],
+                    [float("nan"), float("nan")],
+                ),
+            ),
+        ):
+            result = await mock_manager.fetch_profile(
+                start=[7.0, 46.0], end=[8.0, 47.0], source="cop30", num_points=2
+            )
+
+        assert result.elevation_range == [0.0, 0.0]
+        assert result.elevation_gain_m == 0.0
+        assert result.elevation_loss_m == 0.0
+
+
+# ===================================================================
+# Viewshed: fetch_viewshed
+# ===================================================================
+
+
+class TestFetchViewshed:
+    """Tests for DEMManager.fetch_viewshed()."""
+
+    async def test_fetch_viewshed_success(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        # Create a viewshed array: 60% visible, 40% hidden within radius
+        vs_arr = np.full((100, 100), np.nan, dtype=np.float32)
+        vs_arr[40:60, 40:60] = 1.0  # 400 visible
+        vs_arr[60:70, 40:60] = 0.0  # 200 hidden
+        # rest is NaN (outside radius)
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_viewshed",
+                return_value=vs_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+        ):
+            result = await mock_manager.fetch_viewshed(
+                observer=[7.5, 46.5], radius_m=5000.0, source="cop30"
+            )
+
+        assert isinstance(result, ViewshedResult)
+        assert result.artifact_ref.startswith("dem/")
+        assert result.crs == str(sample_crs)
+        assert result.resolution_m == 30
+        assert result.radius_m == 5000.0
+        # 400 visible out of 600 analyzed = 66.7%
+        assert result.visible_percentage == pytest.approx(66.7, abs=0.1)
+
+    async def test_fetch_viewshed_radius_too_large(self, mock_manager):
+        with pytest.raises(ValueError, match="exceeds maximum"):
+            await mock_manager.fetch_viewshed(
+                observer=[7.5, 46.5], radius_m=100000.0, source="cop30"
+            )
+
+    async def test_fetch_viewshed_observer_elevation(
+        self, mock_manager, sample_crs, sample_transform
+    ):
+        """Observer elevation is read from the elevation array at observer position."""
+        elev = np.full((100, 100), 500.0, dtype=np.float32)
+        vs_arr = np.full((100, 100), np.nan, dtype=np.float32)
+        vs_arr[50, 50] = 1.0
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(elev, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_viewshed",
+                return_value=vs_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+        ):
+            result = await mock_manager.fetch_viewshed(
+                observer=[7.5, 46.5], radius_m=1000.0, source="cop30"
+            )
+
+        # The observer elevation should be read from the elevation grid
+        # Since we filled with 500.0, we expect it to be 500.0
+        assert result.observer_elevation_m == pytest.approx(500.0)
+
+    async def test_fetch_viewshed_invalid_source(self, mock_manager):
+        with pytest.raises(ValueError, match="Unknown DEM source"):
+            await mock_manager.fetch_viewshed(
+                observer=[7.5, 46.5], radius_m=5000.0, source="bad_source"
+            )
+
+    async def test_fetch_viewshed_no_coverage(self, mock_manager):
+        """Source with no tile URL constructor raises."""
+        with pytest.raises(ValueError, match="does not cover"):
+            await mock_manager.fetch_viewshed(observer=[7.5, 46.5], radius_m=1000.0, source="srtm")
+
+    async def test_fetch_viewshed_all_visible(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        """100% visibility case."""
+        vs_arr = np.ones((100, 100), dtype=np.float32)  # all visible
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_viewshed",
+                return_value=vs_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+        ):
+            result = await mock_manager.fetch_viewshed(
+                observer=[7.5, 46.5], radius_m=1000.0, source="cop30"
+            )
+
+        assert result.visible_percentage == pytest.approx(100.0)

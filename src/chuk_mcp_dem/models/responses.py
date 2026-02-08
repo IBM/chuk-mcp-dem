@@ -325,3 +325,189 @@ class CapabilitiesResponse(BaseModel):
             f"Guidance: {self.llm_guidance}",
         ]
         return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Terrain analysis responses (Phase 1.1)
+# ---------------------------------------------------------------------------
+
+
+class HillshadeResponse(BaseModel):
+    """Response model for hillshade computation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., description="DEM source used")
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    artifact_ref: str = Field(..., description="Artifact store reference for hillshade data")
+    preview_ref: str | None = Field(None, description="PNG preview artifact reference")
+    azimuth: float = Field(..., description="Sun azimuth in degrees from north")
+    altitude: float = Field(..., description="Sun altitude in degrees above horizon")
+    z_factor: float = Field(..., description="Vertical exaggeration factor")
+    crs: str = Field(..., description="Coordinate reference system")
+    resolution_m: float = Field(..., description="Output resolution in metres")
+    shape: list[int] = Field(..., description="Array shape [height, width]")
+    value_range: list[float] = Field(..., description="[min, max] hillshade values")
+    output_format: str = Field(..., description="Output format (geotiff or png)")
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        shape_str = f"{self.shape[0]}x{self.shape[1]}"
+        lines = [
+            f"Hillshade: {self.source}",
+            f"Artifact: {self.artifact_ref}",
+            f"Shape: {shape_str} ({self.crs}, {self.resolution_m}m)",
+            f"Azimuth: {self.azimuth:.0f}, Altitude: {self.altitude:.0f}",
+            f"Z-factor: {self.z_factor}",
+            f"Value range: {self.value_range[0]:.1f} to {self.value_range[1]:.1f}",
+            f"Format: {self.output_format}",
+        ]
+        if self.preview_ref:
+            lines.append(f"Preview: {self.preview_ref}")
+        return "\n".join(lines)
+
+
+class SlopeResponse(BaseModel):
+    """Response model for slope computation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., description="DEM source used")
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    artifact_ref: str = Field(..., description="Artifact store reference for slope data")
+    preview_ref: str | None = Field(None, description="PNG preview artifact reference")
+    units: str = Field(..., description="Slope units (degrees or percent)")
+    crs: str = Field(..., description="Coordinate reference system")
+    resolution_m: float = Field(..., description="Output resolution in metres")
+    shape: list[int] = Field(..., description="Array shape [height, width]")
+    value_range: list[float] = Field(..., description="[min, max] slope values")
+    output_format: str = Field(..., description="Output format (geotiff or png)")
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        shape_str = f"{self.shape[0]}x{self.shape[1]}"
+        lines = [
+            f"Slope: {self.source} ({self.units})",
+            f"Artifact: {self.artifact_ref}",
+            f"Shape: {shape_str} ({self.crs}, {self.resolution_m}m)",
+            f"Value range: {self.value_range[0]:.1f} to {self.value_range[1]:.1f}",
+            f"Format: {self.output_format}",
+        ]
+        if self.preview_ref:
+            lines.append(f"Preview: {self.preview_ref}")
+        return "\n".join(lines)
+
+
+class AspectResponse(BaseModel):
+    """Response model for aspect computation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., description="DEM source used")
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    artifact_ref: str = Field(..., description="Artifact store reference for aspect data")
+    preview_ref: str | None = Field(None, description="PNG preview artifact reference")
+    flat_value: float = Field(..., description="Value used for flat areas")
+    crs: str = Field(..., description="Coordinate reference system")
+    resolution_m: float = Field(..., description="Output resolution in metres")
+    shape: list[int] = Field(..., description="Array shape [height, width]")
+    value_range: list[float] = Field(..., description="[min, max] aspect values")
+    output_format: str = Field(..., description="Output format (geotiff or png)")
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        shape_str = f"{self.shape[0]}x{self.shape[1]}"
+        lines = [
+            f"Aspect: {self.source}",
+            f"Artifact: {self.artifact_ref}",
+            f"Shape: {shape_str} ({self.crs}, {self.resolution_m}m)",
+            f"Flat value: {self.flat_value}",
+            f"Value range: {self.value_range[0]:.1f} to {self.value_range[1]:.1f}",
+            f"Format: {self.output_format}",
+        ]
+        if self.preview_ref:
+            lines.append(f"Preview: {self.preview_ref}")
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Profile & viewshed responses (Phase 1.2)
+# ---------------------------------------------------------------------------
+
+
+class ProfilePointInfo(BaseModel):
+    """Elevation data for a single point in a profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lon: float = Field(..., description="Longitude")
+    lat: float = Field(..., description="Latitude")
+    distance_m: float = Field(..., description="Distance from start in metres")
+    elevation_m: float = Field(..., description="Elevation in metres")
+
+
+class ProfileResponse(BaseModel):
+    """Response model for elevation profile extraction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., description="DEM source used")
+    start: list[float] = Field(..., description="Start point [lon, lat]")
+    end: list[float] = Field(..., description="End point [lon, lat]")
+    num_points: int = Field(..., description="Number of profile points")
+    points: list[ProfilePointInfo] = Field(..., description="Profile points with elevation")
+    total_distance_m: float = Field(..., description="Total profile distance in metres")
+    elevation_range: list[float] = Field(..., description="[min, max] elevation in metres")
+    elevation_gain_m: float = Field(..., description="Total elevation gain in metres")
+    elevation_loss_m: float = Field(..., description="Total elevation loss in metres")
+    interpolation: str = Field(..., description="Interpolation method used")
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        elev_min, elev_max = self.elevation_range
+        lines = [
+            f"Profile: {self.source}",
+            f"Start: ({self.start[0]:.6f}, {self.start[1]:.6f})",
+            f"End: ({self.end[0]:.6f}, {self.end[1]:.6f})",
+            f"Distance: {self.total_distance_m:.1f}m ({self.num_points} points)",
+            f"Elevation range: {elev_min:.1f}m to {elev_max:.1f}m",
+            f"Gain: {self.elevation_gain_m:.1f}m, Loss: {self.elevation_loss_m:.1f}m",
+            f"Interpolation: {self.interpolation}",
+        ]
+        return "\n".join(lines)
+
+
+class ViewshedResponse(BaseModel):
+    """Response model for viewshed analysis."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., description="DEM source used")
+    observer: list[float] = Field(..., description="Observer point [lon, lat]")
+    radius_m: float = Field(..., description="Analysis radius in metres")
+    observer_height_m: float = Field(..., description="Observer height above ground in metres")
+    observer_elevation_m: float = Field(..., description="Ground elevation at observer in metres")
+    artifact_ref: str = Field(..., description="Artifact store reference for viewshed raster")
+    preview_ref: str | None = Field(None, description="PNG preview artifact reference")
+    crs: str = Field(..., description="Coordinate reference system")
+    resolution_m: float = Field(..., description="Output resolution in metres")
+    shape: list[int] = Field(..., description="Array shape [height, width]")
+    visible_percentage: float = Field(..., description="Percentage of area visible", ge=0, le=100)
+    output_format: str = Field(..., description="Output format (geotiff or png)")
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        shape_str = f"{self.shape[0]}x{self.shape[1]}"
+        lines = [
+            f"Viewshed: {self.source}",
+            f"Observer: ({self.observer[0]:.6f}, {self.observer[1]:.6f})",
+            f"Radius: {self.radius_m:.0f}m, Height: {self.observer_height_m:.1f}m",
+            f"Observer elevation: {self.observer_elevation_m:.1f}m",
+            f"Artifact: {self.artifact_ref}",
+            f"Shape: {shape_str} ({self.crs}, {self.resolution_m}m)",
+            f"Visible: {self.visible_percentage:.1f}%",
+            f"Format: {self.output_format}",
+        ]
+        if self.preview_ref:
+            lines.append(f"Preview: {self.preview_ref}")
+        return "\n".join(lines)

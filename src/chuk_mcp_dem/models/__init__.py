@@ -1,17 +1,23 @@
 """Response models for chuk-mcp-dem."""
 
 from .responses import (
+    AspectResponse,
     CapabilitiesResponse,
     CoverageCheckResponse,
     ErrorResponse,
     FetchResponse,
+    HillshadeResponse,
     MultiPointResponse,
     PointElevationResponse,
+    ProfilePointInfo,
+    ProfileResponse,
     SizeEstimateResponse,
+    SlopeResponse,
     SourceDetailResponse,
     SourceInfo,
     SourcesResponse,
     StatusResponse,
+    ViewshedResponse,
     format_response,
 )
 
@@ -27,5 +33,11 @@ __all__ = [
     "MultiPointResponse",
     "StatusResponse",
     "CapabilitiesResponse",
+    "HillshadeResponse",
+    "SlopeResponse",
+    "AspectResponse",
+    "ProfilePointInfo",
+    "ProfileResponse",
+    "ViewshedResponse",
     "format_response",
 ]

@@ -76,7 +76,7 @@ Get detailed metadata for a specific DEM source.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `source` | `str` | *required* | Source identifier (e.g., `cop30`, `srtm`) |
+| `source` | `str` | `cop30` | Source identifier (e.g., `cop30`, `srtm`) |
 
 **Response:** `SourceDetailResponse`
 
@@ -162,7 +162,6 @@ Download elevation data for a bounding box.
 | `resolution_m` | `float?` | `None` | Target resolution (native if omitted) |
 | `output_crs` | `str?` | `None` | Output CRS (source CRS if omitted) |
 | `fill_voids` | `bool` | `true` | Fill void pixels via nearest-neighbour interpolation |
-| `output_format` | `str` | `geotiff` | `geotiff` or `png` |
 
 **Response:** `FetchResponse`
 

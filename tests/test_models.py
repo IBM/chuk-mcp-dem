@@ -14,18 +14,24 @@ import pytest
 from pydantic import ValidationError
 
 from chuk_mcp_dem.models.responses import (
+    AspectResponse,
     CapabilitiesResponse,
     CoverageCheckResponse,
     ErrorResponse,
     FetchResponse,
+    HillshadeResponse,
     MultiPointResponse,
     PointElevationResponse,
     PointInfo,
+    ProfilePointInfo,
+    ProfileResponse,
     SizeEstimateResponse,
+    SlopeResponse,
     SourceDetailResponse,
     SourceInfo,
     SourcesResponse,
     StatusResponse,
+    ViewshedResponse,
     format_response,
 )
 
@@ -639,3 +645,357 @@ class TestFormatResponse:
         result = format_response(resp, output_mode="text")
         assert "Default: cop30" in result
         assert "cop30:" in result
+
+
+# ===========================================================================
+# HillshadeResponse
+# ===========================================================================
+
+
+class TestHillshadeResponse:
+    def _make(self, **overrides):
+        defaults = dict(
+            source="cop30",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/abc123.tif",
+            preview_ref=None,
+            azimuth=315.0,
+            altitude=45.0,
+            z_factor=1.0,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            value_range=[0.0, 254.0],
+            output_format="geotiff",
+            message="Hillshade computed",
+        )
+        defaults.update(overrides)
+        return HillshadeResponse(**defaults)
+
+    def test_creation(self):
+        resp = self._make()
+        assert resp.source == "cop30"
+        assert resp.azimuth == 315.0
+        assert resp.altitude == 45.0
+        assert resp.z_factor == 1.0
+        assert resp.shape == [100, 100]
+        assert resp.preview_ref is None
+
+    def test_to_text_returns_string(self):
+        text = self._make().to_text()
+        assert isinstance(text, str)
+        assert "Hillshade: cop30" in text
+        assert "dem/abc123.tif" in text
+        assert "100x100" in text
+        assert "315" in text
+        assert "45" in text
+
+    def test_to_text_with_preview(self):
+        text = self._make(preview_ref="dem/preview_hs.png").to_text()
+        assert "Preview: dem/preview_hs.png" in text
+
+    def test_to_text_no_preview(self):
+        text = self._make(preview_ref=None).to_text()
+        assert "Preview" not in text
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(unknown_field="bad")
+
+    def test_optional_preview_ref_none(self):
+        resp = self._make(preview_ref=None)
+        assert resp.preview_ref is None
+
+    def test_value_range_in_text(self):
+        text = self._make(value_range=[10.5, 250.3]).to_text()
+        assert "10.5" in text
+        assert "250.3" in text
+
+
+# ===========================================================================
+# SlopeResponse
+# ===========================================================================
+
+
+class TestSlopeResponse:
+    def _make(self, **overrides):
+        defaults = dict(
+            source="cop30",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/slope_abc.tif",
+            preview_ref=None,
+            units="degrees",
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            value_range=[0.0, 85.0],
+            output_format="geotiff",
+            message="Slope computed",
+        )
+        defaults.update(overrides)
+        return SlopeResponse(**defaults)
+
+    def test_creation(self):
+        resp = self._make()
+        assert resp.source == "cop30"
+        assert resp.units == "degrees"
+        assert resp.resolution_m == 30.0
+        assert resp.preview_ref is None
+
+    def test_to_text_returns_string(self):
+        text = self._make().to_text()
+        assert isinstance(text, str)
+        assert "Slope: cop30 (degrees)" in text
+        assert "dem/slope_abc.tif" in text
+        assert "100x100" in text
+
+    def test_to_text_percent_units(self):
+        text = self._make(units="percent").to_text()
+        assert "Slope: cop30 (percent)" in text
+
+    def test_to_text_with_preview(self):
+        text = self._make(preview_ref="dem/slope_preview.png").to_text()
+        assert "Preview: dem/slope_preview.png" in text
+
+    def test_to_text_no_preview(self):
+        text = self._make(preview_ref=None).to_text()
+        assert "Preview" not in text
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(bogus=42)
+
+    def test_optional_preview_ref_none(self):
+        resp = self._make(preview_ref=None)
+        assert resp.preview_ref is None
+
+
+# ===========================================================================
+# AspectResponse
+# ===========================================================================
+
+
+class TestAspectResponse:
+    def _make(self, **overrides):
+        defaults = dict(
+            source="cop30",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/aspect_abc.tif",
+            preview_ref=None,
+            flat_value=-1.0,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            value_range=[-1.0, 359.9],
+            output_format="geotiff",
+            message="Aspect computed",
+        )
+        defaults.update(overrides)
+        return AspectResponse(**defaults)
+
+    def test_creation(self):
+        resp = self._make()
+        assert resp.source == "cop30"
+        assert resp.flat_value == -1.0
+        assert resp.shape == [100, 100]
+        assert resp.preview_ref is None
+
+    def test_to_text_returns_string(self):
+        text = self._make().to_text()
+        assert isinstance(text, str)
+        assert "Aspect: cop30" in text
+        assert "dem/aspect_abc.tif" in text
+        assert "100x100" in text
+        assert "Flat value: -1.0" in text
+
+    def test_to_text_with_preview(self):
+        text = self._make(preview_ref="dem/aspect_preview.png").to_text()
+        assert "Preview: dem/aspect_preview.png" in text
+
+    def test_to_text_no_preview(self):
+        text = self._make(preview_ref=None).to_text()
+        assert "Preview" not in text
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(extra=True)
+
+    def test_optional_preview_ref_none(self):
+        resp = self._make(preview_ref=None)
+        assert resp.preview_ref is None
+
+    def test_custom_flat_value(self):
+        resp = self._make(flat_value=-9999.0)
+        assert resp.flat_value == -9999.0
+        text = resp.to_text()
+        assert "Flat value: -9999.0" in text
+
+
+# ===========================================================================
+# ProfilePointInfo
+# ===========================================================================
+
+
+class TestProfilePointInfo:
+    def test_creation(self):
+        p = ProfilePointInfo(lon=7.5, lat=46.5, distance_m=0.0, elevation_m=1500.0)
+        assert p.lon == 7.5
+        assert p.lat == 46.5
+        assert p.distance_m == 0.0
+        assert p.elevation_m == 1500.0
+
+    def test_no_to_text(self):
+        """ProfilePointInfo has no to_text method."""
+        p = ProfilePointInfo(lon=0.0, lat=0.0, distance_m=0.0, elevation_m=0.0)
+        assert not hasattr(p, "to_text")
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            ProfilePointInfo(lon=0.0, lat=0.0, distance_m=0.0, elevation_m=0.0, extra="bad")
+
+    def test_negative_coords(self):
+        p = ProfilePointInfo(lon=-105.27, lat=-33.5, distance_m=5000.0, elevation_m=200.0)
+        assert p.lon == pytest.approx(-105.27)
+        assert p.lat == pytest.approx(-33.5)
+
+
+# ===========================================================================
+# ProfileResponse
+# ===========================================================================
+
+
+class TestProfileResponse:
+    def _make(self, **overrides):
+        points = [
+            ProfilePointInfo(lon=7.0, lat=46.0, distance_m=0.0, elevation_m=1000.0),
+            ProfilePointInfo(lon=7.5, lat=46.5, distance_m=5000.0, elevation_m=1500.0),
+            ProfilePointInfo(lon=8.0, lat=47.0, distance_m=10000.0, elevation_m=1200.0),
+        ]
+        defaults = dict(
+            source="cop30",
+            start=[7.0, 46.0],
+            end=[8.0, 47.0],
+            num_points=3,
+            points=points,
+            total_distance_m=10000.0,
+            elevation_range=[1000.0, 1500.0],
+            elevation_gain_m=500.0,
+            elevation_loss_m=300.0,
+            interpolation="bilinear",
+            message="Profile extracted",
+        )
+        defaults.update(overrides)
+        return ProfileResponse(**defaults)
+
+    def test_creation(self):
+        resp = self._make()
+        assert resp.source == "cop30"
+        assert resp.num_points == 3
+        assert len(resp.points) == 3
+        assert resp.total_distance_m == 10000.0
+        assert resp.elevation_gain_m == 500.0
+        assert resp.elevation_loss_m == 300.0
+
+    def test_to_text_returns_string(self):
+        text = self._make().to_text()
+        assert isinstance(text, str)
+        assert "Profile: cop30" in text
+        assert "7.000000" in text
+        assert "46.000000" in text
+        assert "10000.0m" in text
+        assert "3 points" in text
+        assert "Gain: 500.0m" in text
+        assert "Loss: 300.0m" in text
+        assert "bilinear" in text
+
+    def test_to_text_elevation_range(self):
+        text = self._make().to_text()
+        assert "1000.0m to 1500.0m" in text
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(nope="x")
+
+    def test_start_end_in_text(self):
+        text = self._make().to_text()
+        assert "Start:" in text
+        assert "End:" in text
+
+
+# ===========================================================================
+# ViewshedResponse
+# ===========================================================================
+
+
+class TestViewshedResponse:
+    def _make(self, **overrides):
+        defaults = dict(
+            source="cop30",
+            observer=[7.5, 46.5],
+            radius_m=5000.0,
+            observer_height_m=1.8,
+            observer_elevation_m=1500.0,
+            artifact_ref="dem/viewshed_abc.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[200, 200],
+            visible_percentage=45.2,
+            output_format="geotiff",
+            message="Viewshed computed",
+        )
+        defaults.update(overrides)
+        return ViewshedResponse(**defaults)
+
+    def test_creation(self):
+        resp = self._make()
+        assert resp.source == "cop30"
+        assert resp.observer == [7.5, 46.5]
+        assert resp.radius_m == 5000.0
+        assert resp.observer_height_m == 1.8
+        assert resp.observer_elevation_m == 1500.0
+        assert resp.visible_percentage == 45.2
+        assert resp.preview_ref is None
+
+    def test_to_text_returns_string(self):
+        text = self._make().to_text()
+        assert isinstance(text, str)
+        assert "Viewshed: cop30" in text
+        assert "7.500000" in text
+        assert "46.500000" in text
+        assert "5000m" in text
+        assert "1.8m" in text
+        assert "1500.0m" in text
+        assert "45.2%" in text
+        assert "dem/viewshed_abc.tif" in text
+
+    def test_to_text_with_preview(self):
+        text = self._make(preview_ref="dem/viewshed_preview.png").to_text()
+        assert "Preview: dem/viewshed_preview.png" in text
+
+    def test_to_text_no_preview(self):
+        text = self._make(preview_ref=None).to_text()
+        assert "Preview" not in text
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(unknown="bad")
+
+    def test_optional_preview_ref_none(self):
+        resp = self._make(preview_ref=None)
+        assert resp.preview_ref is None
+
+    def test_visible_percentage_bounds(self):
+        """visible_percentage has ge=0, le=100 constraint."""
+        with pytest.raises(ValidationError):
+            self._make(visible_percentage=101.0)
+        with pytest.raises(ValidationError):
+            self._make(visible_percentage=-1.0)
+
+    def test_visible_percentage_zero(self):
+        resp = self._make(visible_percentage=0.0)
+        assert resp.visible_percentage == 0.0
+
+    def test_visible_percentage_hundred(self):
+        resp = self._make(visible_percentage=100.0)
+        assert resp.visible_percentage == 100.0
