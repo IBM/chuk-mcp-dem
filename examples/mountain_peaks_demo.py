@@ -89,20 +89,22 @@ async def main() -> None:
     for i, p in enumerate(peak_data, 1):
         print(f"  {i:<6}{p['name']:<20}{p['dem_m']:<10.1f}{p['known_m']:<12}{p['diff']:<+10.1f}")
 
-    # Step 2b: Multi-point batch query (nearby peaks sharing tiles)
-    # Use 3 peaks in the western US that share a manageable tile footprint
-    batch_peaks = [
-        p for p in PEAKS if p["name"] in ("Mount Whitney", "Pikes Peak", "Mount Rainier")
+    # Step 2b: Multi-point batch query (nearby peaks sharing few tiles)
+    # Peaks must be close together to avoid fetching hundreds of tiles
+    batch_points_info = [
+        {"name": "Mount Whitney", "lon": -118.2923, "lat": 36.5785},
+        {"name": "White Mountain Peak", "lon": -118.2556, "lat": 37.6342},
+        {"name": "Mount Langley", "lon": -118.2717, "lat": 36.5230},
     ]
-    batch_points = [[p["lon"], p["lat"]] for p in batch_peaks]
-    print(f"\n  Batch query ({len(batch_peaks)} nearby peaks via dem_fetch_points):")
+    batch_points = [[p["lon"], p["lat"]] for p in batch_points_info]
+    print(f"\n  Batch query ({len(batch_points)} nearby CA peaks via dem_fetch_points):")
     multi_result = await runner.run("dem_fetch_points", points=batch_points, source=SOURCE)
     if "error" in multi_result:
         print(f"  ERROR: {multi_result['error']}")
     else:
         elev_range = multi_result["elevation_range"]
         print(f"  Range: {elev_range[0]:.0f}m to {elev_range[1]:.0f}m")
-        for p_info, p_meta in zip(multi_result["points"], batch_peaks):
+        for p_info, p_meta in zip(multi_result["points"], batch_points_info):
             print(f"    {p_meta['name']}: {p_info['elevation_m']:.1f}m")
 
     # Step 3: Interpolation comparison for one peak
