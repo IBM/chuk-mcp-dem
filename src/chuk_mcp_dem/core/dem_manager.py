@@ -965,14 +965,14 @@ class DEMManager:
         """Store raster data in the artifact store."""
         try:
             store = self._get_store()
-            ref = f"dem/{uuid.uuid4().hex[:12]}{suffix}"
             mime = "image/tiff" if suffix.endswith(".tif") else "image/png"
+            filename = f"dem_{uuid.uuid4().hex[:12]}{suffix}"
 
-            await store.store(
-                ref,
+            ref = await store.store(
                 data,
-                mime_type=mime,
-                metadata=metadata,
+                mime=mime,
+                meta=metadata,
+                filename=filename,
                 summary=f"DEM data ({metadata.get('type', 'unknown')})",
             )
             return ref

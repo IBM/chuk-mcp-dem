@@ -40,7 +40,14 @@ def sample_crs():
 def mock_artifact_store():
     """Mock artifact store."""
     store = AsyncMock()
-    store.store = AsyncMock(return_value=None)
+    _call_count = {"n": 0}
+
+    async def _mock_store(data, **kwargs):
+        _call_count["n"] += 1
+        filename = kwargs.get("filename", f"dem_mock{_call_count['n']}.tif")
+        return f"dem/{filename}"
+
+    store.store = AsyncMock(side_effect=_mock_store)
     store.retrieve = AsyncMock(return_value=b"fake-geotiff-bytes")
     return store
 
