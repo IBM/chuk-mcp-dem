@@ -37,7 +37,7 @@ at server startup, not at module import time.
 
 ### 6. Test Coverage >90% per File, 95%+ Overall
 
-932 tests across 8 test files. Overall project coverage is 95%.
+993 tests across 8 test files. Overall project coverage is 95%.
 Every source module maintains at least 78% line coverage (async_server.py,
 which has a short `if __name__` block), with most modules at 95-100%.
 Tests mock at the `DEMManager` level for tool tests, and at the rasterio
@@ -59,7 +59,7 @@ server.py                         # CLI entry point (sync)
   +-- async_server.py             # Async server setup, tool registration
        +-- tools/discovery/api.py       # list_sources, describe_source, status, capabilities
        +-- tools/download/api.py        # fetch, fetch_point, fetch_points, check_coverage, estimate_size
-       +-- tools/analysis/api.py        # hillshade, slope, aspect, curvature, TRI, contour, profile, viewshed
+       +-- tools/analysis/api.py        # hillshade, slope, aspect, curvature, TRI, contour, watershed, profile, viewshed
        +-- core/dem_manager.py          # Cache, download pipeline, terrain, artifact storage
             +-- core/raster_io.py       # COG reading, merging, sampling, terrain, profile, viewshed, PNG
 
@@ -89,13 +89,15 @@ The central orchestrator. Manages:
 - **Tile cache**: LRU dict with byte-size tracking (100 MB total, 10 MB per item)
 - **Tile URL construction**: Source-specific URL builders for Copernicus, SRTM, 3DEP, and FABDEM
 - **Download pipeline**: `fetch_elevation()`, `fetch_point()`, `fetch_points()`
-- **Terrain analysis**: `fetch_hillshade()`, `fetch_slope()`, `fetch_aspect()`, `fetch_curvature()`, `fetch_tri()`, `fetch_contours()`
+- **Terrain analysis**: `fetch_hillshade()`, `fetch_slope()`, `fetch_aspect()`, `fetch_curvature()`, `fetch_tri()`, `fetch_contours()`, `fetch_watershed()`
 - **Profile extraction**: `fetch_profile()` with haversine distances and gain/loss
 - **Viewshed analysis**: `fetch_viewshed()` with DDA ray-casting visibility
 - **Void filling**: Nearest-neighbour interpolation for NaN pixels
 - **Artifact storage**: `_store_raster()` writes bytes + metadata to chuk-artifacts
 - **Coverage checking**: `check_coverage()` and `estimate_size()` without I/O
 - **Discovery**: `list_sources()` and `describe_source()` from constant metadata
+
+- **License warnings**: `get_license_warning()` checks for FABDEM non-commercial restrictions
 
 Result dataclasses: `ElevationResult`, `TerrainResult`, `ContourResult`, `ProfileResult`, `ViewshedResult`.
 
@@ -113,6 +115,7 @@ Pure I/O layer -- all functions are synchronous (called via `to_thread()`):
 - `compute_curvature()`: Zevenbergen-Thorne second-order finite difference (profile curvature)
 - `compute_tri()`: Terrain Ruggedness Index (mean absolute diff from 8 neighbours)
 - `compute_contours()`: Contour line generation via sign-change detection
+- `compute_flow_accumulation()`: D8 flow direction and accumulation for watershed analysis
 - `compute_profile_points()`: Line sampling between two points with haversine distances
 - `compute_viewshed()`: DDA ray-casting visibility analysis from observer point
 - `arrays_to_geotiff()`: NumPy array to GeoTIFF bytes via MemoryFile
@@ -123,6 +126,7 @@ Pure I/O layer -- all functions are synchronous (called via `to_thread()`):
 - `curvature_to_png()`: Diverging blue-white-red ramp for curvature visualisation
 - `tri_to_png()`: Green-yellow-red ramp for TRI visualisation
 - `contours_to_png()`: Terrain background with contour line overlay
+- `watershed_to_png()`: Log-scaled blue ramp for stream network visualisation
 
 ### `models/responses.py`
 
@@ -131,9 +135,11 @@ serialisation errors early. Includes `SourcesResponse`, `FetchResponse`,
 `PointElevationResponse`, `MultiPointResponse`, `CoverageCheckResponse`,
 `SizeEstimateResponse`, `StatusResponse`, `CapabilitiesResponse`,
 `HillshadeResponse`, `SlopeResponse`, `AspectResponse`, `CurvatureResponse`,
-`TRIResponse`, `ContourResponse`, `ProfilePointInfo`, `ProfileResponse`, `ViewshedResponse`.
+`TRIResponse`, `ContourResponse`, `WatershedResponse`, `ProfilePointInfo`, `ProfileResponse`, `ViewshedResponse`.
 
 Every response model implements `to_text()` for human-readable output mode.
+Models that accept a `source` parameter include an optional `license_warning` field,
+populated automatically when using FABDEM (CC-BY-NC-SA-4.0 non-commercial).
 
 ### `constants.py`
 
@@ -144,6 +150,7 @@ All magic strings, source metadata, and configuration values. Includes:
 - `StorageProvider`, `SessionProvider`, `EnvVar` -- environment configuration
 - `ErrorMessages`, `SuccessMessages` -- format-string message templates
 - `TERRAIN_DERIVATIVES`, `ANALYSIS_TOOLS`, `OUTPUT_FORMATS` -- capability lists
+- `FABDEM_LICENSE_WARNING`, `get_license_warning()` -- license restriction handling
 - Cache limits: `TILE_CACHE_MAX_BYTES` (100 MB), `TILE_CACHE_MAX_ITEM` (10 MB)
 - Terrain defaults: azimuth, altitude, z-factor, window size
 - Profile/viewshed defaults: `DEFAULT_NUM_POINTS` (100), `DEFAULT_OBSERVER_HEIGHT_M` (1.8), `MAX_VIEWSHED_RADIUS_M` (50 km)
@@ -215,10 +222,11 @@ All magic strings, source metadata, and configuration values. Includes:
        +-- _store_raster()                             <-- artifact storage
 ```
 
-Slope, aspect, curvature, TRI, and contour follow the same pattern, substituting
+Slope, aspect, curvature, TRI, contour, and watershed follow the same pattern, substituting
 `compute_slope()`, `compute_aspect()`, `compute_curvature()`, `compute_tri()`,
-or `compute_contours()` and their respective PNG renderers (`slope_to_png()`,
-`aspect_to_png()`, `curvature_to_png()`, `tri_to_png()`, `contours_to_png()`).
+`compute_contours()`, or `compute_flow_accumulation()` and their respective PNG renderers
+(`slope_to_png()`, `aspect_to_png()`, `curvature_to_png()`, `tri_to_png()`,
+`contours_to_png()`, `watershed_to_png()`).
 
 ### Elevation Profile
 

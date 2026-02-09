@@ -5,7 +5,7 @@ Mount Rainier Terrain Analysis -- chuk-mcp-dem Demo
 Demonstrates the full DEM terrain analysis pipeline for Mount Rainier:
     dem_check_coverage -> dem_estimate_size -> dem_fetch ->
     dem_hillshade -> dem_slope -> dem_aspect -> dem_curvature ->
-    dem_terrain_ruggedness -> dem_contour
+    dem_terrain_ruggedness -> dem_contour -> dem_watershed
 
 Each tool call returns JSON with artifact references and metadata.
 Artifacts are retrieved from the store and rendered with matplotlib.
@@ -174,8 +174,21 @@ async def main() -> None:
     with rasterio.open(io.BytesIO(contour_data)) as src:
         contours = src.read(1)
 
-    # Step 10: Render 4x2 terrain analysis panel
-    print("\nStep 10: Rendering terrain analysis panel...")
+    # Step 10: Compute watershed (flow accumulation)
+    print("\nStep 10: Computing watershed flow accumulation...")
+    watershed_result = await runner.run("dem_watershed", bbox=BBOX, source=SOURCE)
+    if "error" in watershed_result:
+        print(f"  ERROR: {watershed_result['error']}")
+        sys.exit(1)
+    print(f"  Artifact: {watershed_result['artifact_ref']}")
+    print(f"  Value range: {watershed_result['value_range']}")
+
+    ws_data = await store.retrieve(watershed_result["artifact_ref"])
+    with rasterio.open(io.BytesIO(ws_data)) as src:
+        watershed = src.read(1)
+
+    # Step 11: Render 4x2 terrain analysis panel
+    print("\nStep 11: Rendering terrain analysis panel...")
 
     fig, axes = plt.subplots(4, 2, figsize=(16, 26))
 
@@ -233,8 +246,13 @@ async def main() -> None:
     ax.set_title(f"Contours (100m interval, {contour_result['contour_count']} levels)", fontsize=13)
     ax.axis("off")
 
-    # Empty (row 3, right)
-    axes[3, 1].axis("off")
+    # Watershed (row 3, right)
+    ax = axes[3, 1]
+    log_ws = np.log1p(watershed)
+    im = ax.imshow(log_ws, cmap="Blues", vmin=0, vmax=max(float(np.max(log_ws)), 1.0))
+    ax.set_title("Watershed (flow accumulation)", fontsize=13)
+    ax.axis("off")
+    fig.colorbar(im, ax=ax, label="log(cells)", shrink=0.7)
 
     fig.suptitle(
         f"Mount Rainier -- Terrain Analysis\nCopernicus GLO-30 | bbox: {BBOX}",

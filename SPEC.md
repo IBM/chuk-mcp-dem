@@ -12,7 +12,7 @@ elevation model (DEM) discovery, retrieval, and terrain analysis.
 - **Async-first** -- tool entry points are async; sync rasterio I/O runs in thread pools
 - **Pluggable storage** -- raster data stored via chuk-artifacts (memory, filesystem, S3)
 
-All 17 tools are implemented: discovery (4), download (5), terrain analysis (6), and profile/viewshed (2).
+All 18 tools are implemented: discovery (4), download (5), terrain analysis (7), and profile/viewshed (2).
 
 ---
 
@@ -437,6 +437,38 @@ Generate contour lines from elevation data at a specified interval.
 
 ---
 
+#### `dem_watershed`
+
+Compute flow accumulation (watershed) using the D8 algorithm. High accumulation
+values indicate streams and drainage channels. Useful for hydrological analysis
+and flood risk assessment.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `bbox` | `float[4]` | *required* | Bounding box `[west, south, east, north]` |
+| `source` | `str?` | `cop30` | DEM source identifier |
+| `output_format` | `str` | `geotiff` | Output format |
+
+**Response:** `WatershedResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | `str` | DEM source used |
+| `bbox` | `float[]` | Bounding box |
+| `artifact_ref` | `str` | Artifact store reference |
+| `preview_ref` | `str?` | PNG preview reference |
+| `crs` | `str` | Output CRS |
+| `resolution_m` | `float` | Resolution in metres |
+| `shape` | `int[]` | Array shape [height, width] |
+| `value_range` | `float[]` | [min, max] flow accumulation in contributing cells |
+| `output_format` | `str` | Output format used |
+| `license_warning` | `str?` | License restriction warning (FABDEM only) |
+| `message` | `str` | Result message |
+
+---
+
 ### Profile & Viewshed Tools
 
 #### `dem_profile`
@@ -479,6 +511,7 @@ Compute visible area from an observer point.
 | **1.1** | v0.2.0 | +5 tools | Terrain Analysis: hillshade, slope, aspect, curvature, TRI |
 | **1.2** | v0.3.0 | +2 tools | Advanced: profile, viewshed |
 | **1.2+2.0** | v0.4.0 | +1 tool | Contour lines + SRTM/3DEP/FABDEM download integration |
+| **2.1** | v0.5.0 | +1 tool | Watershed analysis + FABDEM license warnings |
 
 ---
 
