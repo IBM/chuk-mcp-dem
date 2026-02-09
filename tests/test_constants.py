@@ -7,6 +7,7 @@ from chuk_mcp_dem.constants import (
     ANALYSIS_TOOLS,
     DEFAULT_ALTITUDE,
     DEFAULT_AZIMUTH,
+    DEFAULT_CONTOUR_INTERVAL_M,
     DEFAULT_FLAT_VALUE,
     DEFAULT_INTERPOLATION,
     DEFAULT_SOURCE,
@@ -14,6 +15,7 @@ from chuk_mcp_dem.constants import (
     DEFAULT_Z_FACTOR,
     DEM_SOURCES,
     DEMSource,
+    FABDEM_LICENSE_WARNING,
     INTERPOLATION_METHODS,
     MAX_DOWNLOAD_BYTES,
     OUTPUT_FORMATS,
@@ -31,6 +33,7 @@ from chuk_mcp_dem.constants import (
     SessionProvider,
     StorageProvider,
     SuccessMessages,
+    get_license_warning,
 )
 
 
@@ -307,8 +310,8 @@ class TestInterpolation:
 
 
 class TestTerrainDerivatives:
-    def test_has_five_entries(self):
-        assert len(TERRAIN_DERIVATIVES) == 5
+    def test_has_seven_entries(self):
+        assert len(TERRAIN_DERIVATIVES) == 7
 
     def test_contains_hillshade(self):
         assert "hillshade" in TERRAIN_DERIVATIVES
@@ -324,6 +327,12 @@ class TestTerrainDerivatives:
 
     def test_contains_tri(self):
         assert "tri" in TERRAIN_DERIVATIVES
+
+    def test_contains_contour(self):
+        assert "contour" in TERRAIN_DERIVATIVES
+
+    def test_contains_watershed(self):
+        assert "watershed" in TERRAIN_DERIVATIVES
 
 
 class TestAnalysisTools:
@@ -366,6 +375,9 @@ class TestTerrainDefaults:
 
     def test_default_window_size(self):
         assert DEFAULT_WINDOW_SIZE == 3
+
+    def test_default_contour_interval(self):
+        assert DEFAULT_CONTOUR_INTERVAL_M == 100.0
 
 
 # ── Cache constants ────────────────────────────────────────────────
@@ -462,6 +474,14 @@ class TestErrorMessages:
         msg = ErrorMessages.INVALID_OUTPUT_FORMAT.format("bmp", "geotiff, png")
         assert "bmp" in msg
 
+    def test_invalid_contour_interval_format(self):
+        msg = ErrorMessages.INVALID_CONTOUR_INTERVAL.format(-50)
+        assert "-50" in msg
+
+    def test_source_not_downloadable_format(self):
+        msg = ErrorMessages.SOURCE_NOT_DOWNLOADABLE.format("ASTER")
+        assert "ASTER" in msg
+
 
 # ── SuccessMessages ────────────────────────────────────────────────
 
@@ -501,3 +521,50 @@ class TestSuccessMessages:
     def test_status_format(self):
         msg = SuccessMessages.STATUS.format("0.1.0", 6, "memory")
         assert "0.1.0" in msg and "6" in msg and "memory" in msg
+
+    def test_contour_complete_format(self):
+        msg = SuccessMessages.CONTOUR_COMPLETE.format("100x100", 50, 8)
+        assert "100x100" in msg and "50" in msg and "8" in msg
+
+    def test_watershed_complete_format(self):
+        msg = SuccessMessages.WATERSHED_COMPLETE.format("100x100", 5000)
+        assert "100x100" in msg and "5000" in msg
+
+
+# ── License Warning ───────────────────────────────────────────────
+
+
+class TestLicenseWarning:
+    def test_fabdem_returns_warning(self):
+        warning = get_license_warning("fabdem")
+        assert warning is not None
+        assert "CC-BY-NC-SA-4.0" in warning
+
+    def test_fabdem_warning_matches_constant(self):
+        assert get_license_warning("fabdem") == FABDEM_LICENSE_WARNING
+
+    def test_cop30_returns_none(self):
+        assert get_license_warning("cop30") is None
+
+    def test_cop90_returns_none(self):
+        assert get_license_warning("cop90") is None
+
+    def test_srtm_returns_none(self):
+        assert get_license_warning("srtm") is None
+
+    def test_aster_returns_none(self):
+        assert get_license_warning("aster") is None
+
+    def test_3dep_returns_none(self):
+        assert get_license_warning("3dep") is None
+
+    def test_unknown_source_returns_none(self):
+        assert get_license_warning("bogus") is None
+
+    def test_fabdem_warning_mentions_noncommercial(self):
+        warning = get_license_warning("fabdem")
+        assert "non-commercial" in warning.lower()
+
+    def test_fabdem_warning_mentions_bristol(self):
+        warning = get_license_warning("fabdem")
+        assert "Bristol" in warning

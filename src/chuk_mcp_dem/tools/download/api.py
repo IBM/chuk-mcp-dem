@@ -13,6 +13,7 @@ from ...constants import (
     INTERPOLATION_METHODS,
     ErrorMessages,
     SuccessMessages,
+    get_license_warning,
 )
 from ...models.responses import (
     CoverageCheckResponse,
@@ -76,6 +77,7 @@ def register_download_tools(mcp, manager):
                 elevation_range=result.elevation_range,
                 dtype=result.dtype,
                 nodata_pixels=result.nodata_pixels,
+                license_warning=get_license_warning(source),
                 message=SuccessMessages.FETCH_COMPLETE.format(estimated_mb),
             )
             return format_response(response, output_mode)
@@ -126,6 +128,7 @@ def register_download_tools(mcp, manager):
                 elevation_m=result.elevation_m,
                 interpolation=interpolation,
                 uncertainty_m=result.uncertainty_m,
+                license_warning=get_license_warning(source),
                 message=SuccessMessages.POINT_ELEVATION.format(
                     result.elevation_m, result.uncertainty_m
                 ),
@@ -179,6 +182,7 @@ def register_download_tools(mcp, manager):
                 points=point_infos,
                 elevation_range=result.elevation_range,
                 interpolation=interpolation,
+                license_warning=get_license_warning(source),
                 message=SuccessMessages.POINTS_ELEVATION.format(len(points)),
             )
             return format_response(response, output_mode)

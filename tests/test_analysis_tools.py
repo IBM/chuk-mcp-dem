@@ -16,7 +16,12 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from chuk_mcp_dem.core.dem_manager import TerrainResult, ProfileResult, ViewshedResult
+from chuk_mcp_dem.core.dem_manager import (
+    TerrainResult,
+    ProfileResult,
+    ViewshedResult,
+    ContourResult,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +91,22 @@ def standard_viewshed_result():
         visible_percentage=65.3,
         observer_elevation_m=500.0,
         radius_m=5000.0,
+    )
+
+
+@pytest.fixture
+def standard_contour_result():
+    """Reusable ContourResult for dem_contour tests."""
+    return ContourResult(
+        artifact_ref="dem/contour123.tif",
+        preview_ref="dem/contour123_preview.png",
+        crs="EPSG:4326",
+        resolution_m=30.0,
+        shape=[100, 100],
+        interval_m=100.0,
+        contour_count=5,
+        elevation_range=[200.0, 700.0],
+        dtype="float32",
     )
 
 
@@ -642,6 +663,517 @@ class TestDemAspect:
 
 
 # ===========================================================================
+# dem_curvature
+# ===========================================================================
+
+
+class TestDemCurvature:
+    """Tests for the dem_curvature tool."""
+
+    @pytest.mark.asyncio
+    async def test_json_success(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_curvature = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_curvature"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert data["artifact_ref"] == "dem/abc123.tif"
+        assert data["preview_ref"] == "dem/abc123_hs.png"
+        assert data["crs"] == "EPSG:4326"
+        assert data["resolution_m"] == 30.0
+        assert data["shape"] == [100, 100]
+        assert data["value_range"] == [0.0, 255.0]
+        assert data["output_format"] == "geotiff"
+
+    @pytest.mark.asyncio
+    async def test_text_success(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_curvature = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_curvature"](bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text")
+
+        assert "Curvature:" in result
+        assert "dem/abc123.tif" in result
+        assert "100x100" in result
+
+    @pytest.mark.asyncio
+    async def test_default_params(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_curvature = AsyncMock(return_value=standard_terrain_result)
+
+        await tools["dem_curvature"](bbox=[7.0, 46.0, 8.0, 47.0])
+
+        call_kwargs = manager.fetch_curvature.call_args.kwargs
+        assert call_kwargs["source"] == "cop30"
+        assert call_kwargs["output_format"] == "geotiff"
+
+    @pytest.mark.asyncio
+    async def test_png_format(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_curvature = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_curvature"](bbox=[7.0, 46.0, 8.0, 47.0], output_format="png")
+        data = json.loads(result)
+
+        assert data["output_format"] == "png"
+        call_kwargs = manager.fetch_curvature.call_args.kwargs
+        assert call_kwargs["output_format"] == "png"
+
+    @pytest.mark.asyncio
+    async def test_invalid_format(self, analysis_tools):
+        tools, manager = analysis_tools
+
+        result = await tools["dem_curvature"](bbox=[7.0, 46.0, 8.0, 47.0], output_format="bmp")
+        data = json.loads(result)
+
+        assert "error" in data
+        assert "bmp" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_format_text(self, analysis_tools):
+        tools, manager = analysis_tools
+
+        result = await tools["dem_curvature"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_format="bmp", output_mode="text"
+        )
+
+        assert "Error:" in result
+        assert "bmp" in result
+
+    @pytest.mark.asyncio
+    async def test_manager_error(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_curvature = AsyncMock(side_effect=RuntimeError("Network timeout"))
+
+        result = await tools["dem_curvature"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert "error" in data
+        assert "Network timeout" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_manager_error_text(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_curvature = AsyncMock(side_effect=RuntimeError("Tile download failed"))
+
+        result = await tools["dem_curvature"](bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text")
+
+        assert "Error:" in result
+        assert "Tile download failed" in result
+
+    @pytest.mark.asyncio
+    async def test_bbox_forwarded(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_curvature = AsyncMock(return_value=standard_terrain_result)
+        bbox = [7.0, 46.0, 8.0, 47.0]
+
+        await tools["dem_curvature"](bbox=bbox)
+
+        call_kwargs = manager.fetch_curvature.call_args.kwargs
+        assert call_kwargs["bbox"] == bbox
+
+    @pytest.mark.asyncio
+    async def test_bbox_in_response(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_curvature = AsyncMock(return_value=standard_terrain_result)
+        bbox = [7.0, 46.0, 8.0, 47.0]
+
+        result = await tools["dem_curvature"](bbox=bbox)
+        data = json.loads(result)
+
+        assert data["bbox"] == bbox
+
+    @pytest.mark.asyncio
+    async def test_source_in_response(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_curvature = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_curvature"](bbox=[7.0, 46.0, 8.0, 47.0], source="srtm")
+        data = json.loads(result)
+
+        assert data["source"] == "srtm"
+
+    @pytest.mark.asyncio
+    async def test_message_contains_shape(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_curvature = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_curvature"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert "message" in data
+        assert "Curvature" in data["message"]
+        assert "100x100" in data["message"]
+
+    @pytest.mark.asyncio
+    async def test_no_preview_ref(self, analysis_tools):
+        tools, manager = analysis_tools
+        result_no_preview = TerrainResult(
+            artifact_ref="dem/xyz.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[50, 50],
+            value_range=[-0.01, 0.01],
+            dtype="float32",
+        )
+        manager.fetch_curvature = AsyncMock(return_value=result_no_preview)
+
+        result = await tools["dem_curvature"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert data["preview_ref"] is None
+        assert data["artifact_ref"] == "dem/xyz.tif"
+
+
+# ===========================================================================
+# dem_terrain_ruggedness
+# ===========================================================================
+
+
+class TestDemTerrainRuggedness:
+    """Tests for the dem_terrain_ruggedness tool."""
+
+    @pytest.mark.asyncio
+    async def test_json_success(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_tri = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_terrain_ruggedness"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert data["artifact_ref"] == "dem/abc123.tif"
+        assert data["preview_ref"] == "dem/abc123_hs.png"
+        assert data["crs"] == "EPSG:4326"
+        assert data["resolution_m"] == 30.0
+        assert data["shape"] == [100, 100]
+        assert data["output_format"] == "geotiff"
+
+    @pytest.mark.asyncio
+    async def test_text_success(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_tri = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_terrain_ruggedness"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text"
+        )
+
+        assert "Terrain Ruggedness:" in result
+        assert "dem/abc123.tif" in result
+        assert "100x100" in result
+
+    @pytest.mark.asyncio
+    async def test_default_params(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_tri = AsyncMock(return_value=standard_terrain_result)
+
+        await tools["dem_terrain_ruggedness"](bbox=[7.0, 46.0, 8.0, 47.0])
+
+        call_kwargs = manager.fetch_tri.call_args.kwargs
+        assert call_kwargs["source"] == "cop30"
+        assert call_kwargs["output_format"] == "geotiff"
+
+    @pytest.mark.asyncio
+    async def test_png_format(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_tri = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_terrain_ruggedness"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_format="png"
+        )
+        data = json.loads(result)
+
+        assert data["output_format"] == "png"
+        call_kwargs = manager.fetch_tri.call_args.kwargs
+        assert call_kwargs["output_format"] == "png"
+
+    @pytest.mark.asyncio
+    async def test_invalid_format(self, analysis_tools):
+        tools, manager = analysis_tools
+
+        result = await tools["dem_terrain_ruggedness"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_format="bmp"
+        )
+        data = json.loads(result)
+
+        assert "error" in data
+        assert "bmp" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_format_text(self, analysis_tools):
+        tools, manager = analysis_tools
+
+        result = await tools["dem_terrain_ruggedness"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_format="bmp", output_mode="text"
+        )
+
+        assert "Error:" in result
+        assert "bmp" in result
+
+    @pytest.mark.asyncio
+    async def test_manager_error(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_tri = AsyncMock(side_effect=RuntimeError("Network timeout"))
+
+        result = await tools["dem_terrain_ruggedness"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert "error" in data
+        assert "Network timeout" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_manager_error_text(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_tri = AsyncMock(side_effect=RuntimeError("Tile download failed"))
+
+        result = await tools["dem_terrain_ruggedness"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text"
+        )
+
+        assert "Error:" in result
+        assert "Tile download failed" in result
+
+    @pytest.mark.asyncio
+    async def test_bbox_forwarded(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_tri = AsyncMock(return_value=standard_terrain_result)
+        bbox = [7.0, 46.0, 8.0, 47.0]
+
+        await tools["dem_terrain_ruggedness"](bbox=bbox)
+
+        call_kwargs = manager.fetch_tri.call_args.kwargs
+        assert call_kwargs["bbox"] == bbox
+
+    @pytest.mark.asyncio
+    async def test_bbox_in_response(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_tri = AsyncMock(return_value=standard_terrain_result)
+        bbox = [7.0, 46.0, 8.0, 47.0]
+
+        result = await tools["dem_terrain_ruggedness"](bbox=bbox)
+        data = json.loads(result)
+
+        assert data["bbox"] == bbox
+
+    @pytest.mark.asyncio
+    async def test_source_in_response(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_tri = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_terrain_ruggedness"](bbox=[7.0, 46.0, 8.0, 47.0], source="srtm")
+        data = json.loads(result)
+
+        assert data["source"] == "srtm"
+
+    @pytest.mark.asyncio
+    async def test_message_contains_shape(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_tri = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_terrain_ruggedness"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert "message" in data
+        assert "Terrain Ruggedness" in data["message"]
+        assert "100x100" in data["message"]
+
+    @pytest.mark.asyncio
+    async def test_no_preview_ref(self, analysis_tools):
+        tools, manager = analysis_tools
+        result_no_preview = TerrainResult(
+            artifact_ref="dem/xyz.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[50, 50],
+            value_range=[0.0, 150.0],
+            dtype="float32",
+        )
+        manager.fetch_tri = AsyncMock(return_value=result_no_preview)
+
+        result = await tools["dem_terrain_ruggedness"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert data["preview_ref"] is None
+        assert data["artifact_ref"] == "dem/xyz.tif"
+
+
+# ===========================================================================
+# dem_contour
+# ===========================================================================
+
+
+class TestDemContour:
+    """Tests for the dem_contour tool."""
+
+    @pytest.mark.asyncio
+    async def test_json_success(self, analysis_tools, standard_contour_result):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(return_value=standard_contour_result)
+
+        result = await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert data["artifact_ref"] == "dem/contour123.tif"
+        assert data["preview_ref"] == "dem/contour123_preview.png"
+        assert data["interval_m"] == 100.0
+        assert data["contour_count"] == 5
+        assert data["elevation_range"] == [200.0, 700.0]
+        assert data["output_format"] == "geotiff"
+
+    @pytest.mark.asyncio
+    async def test_text_success(self, analysis_tools, standard_contour_result):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(return_value=standard_contour_result)
+
+        result = await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text")
+
+        assert "Contours:" in result
+        assert "dem/contour123.tif" in result
+        assert "100x100" in result
+
+    @pytest.mark.asyncio
+    async def test_default_params(self, analysis_tools, standard_contour_result):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(return_value=standard_contour_result)
+
+        await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0])
+
+        call_kwargs = manager.fetch_contours.call_args.kwargs
+        assert call_kwargs["source"] == "cop30"
+        assert call_kwargs["interval_m"] == 100.0
+        assert call_kwargs["output_format"] == "geotiff"
+
+    @pytest.mark.asyncio
+    async def test_custom_interval(self, analysis_tools, standard_contour_result):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(return_value=standard_contour_result)
+
+        await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0], interval_m=50.0)
+
+        call_kwargs = manager.fetch_contours.call_args.kwargs
+        assert call_kwargs["interval_m"] == 50.0
+
+    @pytest.mark.asyncio
+    async def test_png_format(self, analysis_tools, standard_contour_result):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(return_value=standard_contour_result)
+
+        result = await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0], output_format="png")
+        data = json.loads(result)
+
+        assert data["output_format"] == "png"
+        call_kwargs = manager.fetch_contours.call_args.kwargs
+        assert call_kwargs["output_format"] == "png"
+
+    @pytest.mark.asyncio
+    async def test_invalid_format(self, analysis_tools):
+        tools, manager = analysis_tools
+
+        result = await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0], output_format="bmp")
+        data = json.loads(result)
+
+        assert "error" in data
+        assert "bmp" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_interval_zero(self, analysis_tools):
+        tools, manager = analysis_tools
+
+        result = await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0], interval_m=0)
+        data = json.loads(result)
+
+        assert "error" in data
+        assert "interval_m" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_interval_negative(self, analysis_tools):
+        tools, manager = analysis_tools
+
+        result = await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0], interval_m=-50.0)
+        data = json.loads(result)
+
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_invalid_format_text(self, analysis_tools):
+        tools, manager = analysis_tools
+
+        result = await tools["dem_contour"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_format="bmp", output_mode="text"
+        )
+
+        assert "Error:" in result
+        assert "bmp" in result
+
+    @pytest.mark.asyncio
+    async def test_manager_error(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(side_effect=RuntimeError("Network timeout"))
+
+        result = await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert "error" in data
+        assert "Network timeout" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_manager_error_text(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(side_effect=RuntimeError("Tile download failed"))
+
+        result = await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text")
+
+        assert "Error:" in result
+        assert "Tile download failed" in result
+
+    @pytest.mark.asyncio
+    async def test_bbox_forwarded(self, analysis_tools, standard_contour_result):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(return_value=standard_contour_result)
+        bbox = [7.0, 46.0, 8.0, 47.0]
+
+        await tools["dem_contour"](bbox=bbox)
+
+        call_kwargs = manager.fetch_contours.call_args.kwargs
+        assert call_kwargs["bbox"] == bbox
+
+    @pytest.mark.asyncio
+    async def test_bbox_in_response(self, analysis_tools, standard_contour_result):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(return_value=standard_contour_result)
+        bbox = [7.0, 46.0, 8.0, 47.0]
+
+        result = await tools["dem_contour"](bbox=bbox)
+        data = json.loads(result)
+
+        assert data["bbox"] == bbox
+
+    @pytest.mark.asyncio
+    async def test_source_in_response(self, analysis_tools, standard_contour_result):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(return_value=standard_contour_result)
+
+        result = await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0], source="srtm")
+        data = json.loads(result)
+
+        assert data["source"] == "srtm"
+
+    @pytest.mark.asyncio
+    async def test_message_contains_interval(self, analysis_tools, standard_contour_result):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(return_value=standard_contour_result)
+
+        result = await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert "message" in data
+        assert "Contour" in data["message"]
+        assert "100" in data["message"]
+
+
+# ===========================================================================
 # dem_profile
 # ===========================================================================
 
@@ -1148,7 +1680,7 @@ class TestDemViewshed:
 
 
 class TestAnalysisToolRegistration:
-    """Verify that all 5 analysis tools are registered."""
+    """Verify that all 8 analysis tools are registered."""
 
     def test_all_tools_registered(self, analysis_tools):
         tools, _ = analysis_tools
@@ -1156,6 +1688,10 @@ class TestAnalysisToolRegistration:
             "dem_hillshade",
             "dem_slope",
             "dem_aspect",
+            "dem_curvature",
+            "dem_terrain_ruggedness",
+            "dem_contour",
+            "dem_watershed",
             "dem_profile",
             "dem_viewshed",
         }
@@ -1219,6 +1755,56 @@ class TestAnalysisOutputModeConsistency:
             json.loads(result)
 
     @pytest.mark.asyncio
+    async def test_curvature_json_parseable(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_curvature = AsyncMock(return_value=standard_terrain_result)
+        result = await tools["dem_curvature"](bbox=[7.0, 46.0, 8.0, 47.0])
+        parsed = json.loads(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_curvature_text_not_json(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_curvature = AsyncMock(return_value=standard_terrain_result)
+        result = await tools["dem_curvature"](bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text")
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result)
+
+    @pytest.mark.asyncio
+    async def test_tri_json_parseable(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_tri = AsyncMock(return_value=standard_terrain_result)
+        result = await tools["dem_terrain_ruggedness"](bbox=[7.0, 46.0, 8.0, 47.0])
+        parsed = json.loads(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_tri_text_not_json(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_tri = AsyncMock(return_value=standard_terrain_result)
+        result = await tools["dem_terrain_ruggedness"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text"
+        )
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result)
+
+    @pytest.mark.asyncio
+    async def test_contour_json_parseable(self, analysis_tools, standard_contour_result):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(return_value=standard_contour_result)
+        result = await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0])
+        parsed = json.loads(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_contour_text_not_json(self, analysis_tools, standard_contour_result):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(return_value=standard_contour_result)
+        result = await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text")
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result)
+
+    @pytest.mark.asyncio
     async def test_profile_json_parseable(self, analysis_tools, standard_profile_result):
         tools, manager = analysis_tools
         manager.fetch_profile = AsyncMock(return_value=standard_profile_result)
@@ -1253,6 +1839,22 @@ class TestAnalysisOutputModeConsistency:
             json.loads(result)
 
     @pytest.mark.asyncio
+    async def test_watershed_json_parseable(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(return_value=standard_terrain_result)
+        result = await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0])
+        parsed = json.loads(result)
+        assert isinstance(parsed, dict)
+
+    @pytest.mark.asyncio
+    async def test_watershed_text_not_json(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(return_value=standard_terrain_result)
+        result = await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text")
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result)
+
+    @pytest.mark.asyncio
     async def test_error_json_parseable(self, analysis_tools):
         tools, manager = analysis_tools
         manager.fetch_hillshade = AsyncMock(side_effect=Exception("fail"))
@@ -1266,3 +1868,251 @@ class TestAnalysisOutputModeConsistency:
         manager.fetch_hillshade = AsyncMock(side_effect=Exception("boom"))
         result = await tools["dem_hillshade"](bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text")
         assert result.startswith("Error:")
+
+
+# ===========================================================================
+# dem_watershed
+# ===========================================================================
+
+
+class TestDemWatershed:
+    """Tests for the dem_watershed tool."""
+
+    @pytest.mark.asyncio
+    async def test_json_success(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert data["artifact_ref"] == "dem/abc123.tif"
+        assert data["preview_ref"] == "dem/abc123_hs.png"
+        assert data["crs"] == "EPSG:4326"
+        assert data["resolution_m"] == 30.0
+        assert data["shape"] == [100, 100]
+        assert data["value_range"] == [0.0, 255.0]
+        assert data["output_format"] == "geotiff"
+
+    @pytest.mark.asyncio
+    async def test_text_success(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text")
+
+        assert "Watershed:" in result
+        assert "dem/abc123.tif" in result
+        assert "100x100" in result
+
+    @pytest.mark.asyncio
+    async def test_default_params(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(return_value=standard_terrain_result)
+
+        await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0])
+
+        call_kwargs = manager.fetch_watershed.call_args.kwargs
+        assert call_kwargs["source"] == "cop30"
+        assert call_kwargs["output_format"] == "geotiff"
+
+    @pytest.mark.asyncio
+    async def test_custom_source(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(return_value=standard_terrain_result)
+
+        await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0], source="srtm")
+
+        call_kwargs = manager.fetch_watershed.call_args.kwargs
+        assert call_kwargs["source"] == "srtm"
+
+    @pytest.mark.asyncio
+    async def test_png_format(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0], output_format="png")
+        data = json.loads(result)
+
+        assert data["output_format"] == "png"
+        call_kwargs = manager.fetch_watershed.call_args.kwargs
+        assert call_kwargs["output_format"] == "png"
+
+    @pytest.mark.asyncio
+    async def test_invalid_format(self, analysis_tools):
+        tools, manager = analysis_tools
+
+        result = await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0], output_format="bmp")
+        data = json.loads(result)
+
+        assert "error" in data
+        assert "bmp" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_format_text(self, analysis_tools):
+        tools, manager = analysis_tools
+
+        result = await tools["dem_watershed"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_format="bmp", output_mode="text"
+        )
+
+        assert "Error:" in result
+        assert "bmp" in result
+
+    @pytest.mark.asyncio
+    async def test_manager_error(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(side_effect=RuntimeError("Network timeout"))
+
+        result = await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert "error" in data
+        assert "Network timeout" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_manager_error_text(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(side_effect=RuntimeError("Tile download failed"))
+
+        result = await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text")
+
+        assert result.startswith("Error:")
+        assert "Tile download failed" in result
+
+    @pytest.mark.asyncio
+    async def test_bbox_forwarded(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(return_value=standard_terrain_result)
+
+        await tools["dem_watershed"](bbox=[10.0, 20.0, 11.0, 21.0])
+
+        call_kwargs = manager.fetch_watershed.call_args.kwargs
+        assert call_kwargs["bbox"] == [10.0, 20.0, 11.0, 21.0]
+
+    @pytest.mark.asyncio
+    async def test_bbox_in_response(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_watershed"](bbox=[10.0, 20.0, 11.0, 21.0])
+        data = json.loads(result)
+
+        assert data["bbox"] == [10.0, 20.0, 11.0, 21.0]
+
+    @pytest.mark.asyncio
+    async def test_source_in_response(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0], source="srtm")
+        data = json.loads(result)
+
+        assert data["source"] == "srtm"
+
+    @pytest.mark.asyncio
+    async def test_message_contains_shape(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert "100x100" in data["message"]
+
+
+# ===========================================================================
+# FABDEM license warning integration
+# ===========================================================================
+
+
+class TestFabdemLicenseWarning:
+    """Tests that FABDEM source triggers license warnings in tool responses."""
+
+    @pytest.mark.asyncio
+    async def test_hillshade_fabdem_warning(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_hillshade = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_hillshade"](bbox=[7.0, 46.0, 8.0, 47.0], source="fabdem")
+        data = json.loads(result)
+
+        assert data["license_warning"] is not None
+        assert "non-commercial" in data["license_warning"]
+        assert "CC-BY-NC-SA-4.0" in data["license_warning"]
+
+    @pytest.mark.asyncio
+    async def test_hillshade_cop30_no_warning(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_hillshade = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_hillshade"](bbox=[7.0, 46.0, 8.0, 47.0], source="cop30")
+        data = json.loads(result)
+
+        assert data["license_warning"] is None
+
+    @pytest.mark.asyncio
+    async def test_slope_fabdem_warning(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_slope = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_slope"](bbox=[7.0, 46.0, 8.0, 47.0], source="fabdem")
+        data = json.loads(result)
+
+        assert data["license_warning"] is not None
+        assert "non-commercial" in data["license_warning"]
+
+    @pytest.mark.asyncio
+    async def test_watershed_fabdem_warning(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0], source="fabdem")
+        data = json.loads(result)
+
+        assert data["license_warning"] is not None
+        assert "non-commercial" in data["license_warning"]
+
+    @pytest.mark.asyncio
+    async def test_watershed_srtm_no_warning(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_watershed = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_watershed"](bbox=[7.0, 46.0, 8.0, 47.0], source="srtm")
+        data = json.loads(result)
+
+        assert data["license_warning"] is None
+
+    @pytest.mark.asyncio
+    async def test_fabdem_warning_in_text_mode(self, analysis_tools, standard_terrain_result):
+        tools, manager = analysis_tools
+        manager.fetch_hillshade = AsyncMock(return_value=standard_terrain_result)
+
+        result = await tools["dem_hillshade"](
+            bbox=[7.0, 46.0, 8.0, 47.0], source="fabdem", output_mode="text"
+        )
+
+        assert "WARNING:" in result
+        assert "non-commercial" in result
+
+    @pytest.mark.asyncio
+    async def test_contour_fabdem_warning(self, analysis_tools, standard_contour_result):
+        tools, manager = analysis_tools
+        manager.fetch_contours = AsyncMock(return_value=standard_contour_result)
+
+        result = await tools["dem_contour"](bbox=[7.0, 46.0, 8.0, 47.0], source="fabdem")
+        data = json.loads(result)
+
+        assert data["license_warning"] is not None
+        assert "CC-BY-NC-SA-4.0" in data["license_warning"]
+
+    @pytest.mark.asyncio
+    async def test_viewshed_fabdem_warning(self, analysis_tools, standard_viewshed_result):
+        tools, manager = analysis_tools
+        manager.fetch_viewshed = AsyncMock(return_value=standard_viewshed_result)
+
+        result = await tools["dem_viewshed"](observer=[7.5, 46.5], radius_m=5000.0, source="fabdem")
+        data = json.loads(result)
+
+        assert data["license_warning"] is not None
+        assert "non-commercial" in data["license_warning"]

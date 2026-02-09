@@ -225,9 +225,46 @@ class TestMakeTileUrl:
         url = mock_manager._make_tile_url("nonexistent", 46, 7)
         assert url is None
 
-    def test_srtm_returns_none(self, mock_manager):
-        """Sources other than cop30/cop90 return None (no URL constructor)."""
+    def test_srtm_positive_lat_lon(self, mock_manager):
         url = mock_manager._make_tile_url("srtm", 46, 7)
+        assert url is not None
+        assert "elevation-tiles-prod" in url
+        assert "/skadi/N46/" in url
+        assert "N46E007.hgt.gz" in url
+
+    def test_srtm_negative_lat_lon(self, mock_manager):
+        url = mock_manager._make_tile_url("srtm", -33, -70)
+        assert url is not None
+        assert "S33W070.hgt.gz" in url
+
+    def test_3dep_positive_lat_lon(self, mock_manager):
+        url = mock_manager._make_tile_url("3dep", 46, -121)
+        assert url is not None
+        assert "prd-tnm" in url
+        assert "USGS_13_" in url
+        assert "n46w121" in url
+        assert url.endswith(".tif")
+
+    def test_3dep_negative_lat(self, mock_manager):
+        """3DEP uses lowercase n/s e/w."""
+        url = mock_manager._make_tile_url("3dep", 35, -106)
+        assert url is not None
+        assert "n35w106" in url
+
+    def test_fabdem_positive_lat_lon(self, mock_manager):
+        url = mock_manager._make_tile_url("fabdem", 46, 7)
+        assert url is not None
+        assert "data.bris.ac.uk" in url
+        assert "N46E007_FABDEM_V1-2.tif" in url
+
+    def test_fabdem_negative_lat_lon(self, mock_manager):
+        url = mock_manager._make_tile_url("fabdem", -33, -70)
+        assert url is not None
+        assert "S33W070_FABDEM_V1-2.tif" in url
+
+    def test_aster_returns_none(self, mock_manager):
+        """ASTER requires NASA Earthdata auth, returns None."""
+        url = mock_manager._make_tile_url("aster", 46, 7)
         assert url is None
 
 
@@ -388,9 +425,9 @@ class TestFetchElevation:
             await mock_manager.fetch_elevation(bbox=[7.0, 46.0, 8.0, 47.0], source="bad_source")
 
     async def test_fetch_elevation_empty_tile_urls(self, mock_manager):
-        """Source exists but _make_tile_url returns None for non-cop sources."""
+        """Source exists but _make_tile_url returns None (ASTER requires auth)."""
         with pytest.raises(ValueError, match="does not cover"):
-            await mock_manager.fetch_elevation(bbox=[7.0, 46.0, 8.0, 47.0], source="srtm")
+            await mock_manager.fetch_elevation(bbox=[7.0, 46.0, 8.0, 47.0], source="aster")
 
     async def test_fetch_elevation_nodata_counted(self, mock_manager, sample_crs, sample_transform):
         elev = np.full((10, 10), 100.0, dtype=np.float32)
@@ -474,9 +511,9 @@ class TestFetchPoint:
             await mock_manager.fetch_point(lon=7.5, lat=46.5, source="bad")
 
     async def test_fetch_point_no_coverage(self, mock_manager):
-        """Source with no tile URL constructor (srtm) has empty tile_urls."""
+        """Source with no tile URL constructor (aster) has empty tile_urls."""
         with pytest.raises(ValueError, match="does not cover"):
-            await mock_manager.fetch_point(lon=7.5, lat=46.5, source="srtm")
+            await mock_manager.fetch_point(lon=7.5, lat=46.5, source="aster")
 
 
 class TestFetchPoints:
@@ -860,7 +897,7 @@ class TestFetchHillshade:
     async def test_fetch_hillshade_no_coverage(self, mock_manager):
         """Source with no tile URL constructor returns empty tile_urls."""
         with pytest.raises(ValueError, match="does not cover"):
-            await mock_manager.fetch_hillshade(bbox=[7.0, 46.0, 8.0, 47.0], source="srtm")
+            await mock_manager.fetch_hillshade(bbox=[7.0, 46.0, 8.0, 47.0], source="aster")
 
     async def test_fetch_hillshade_png_output(
         self, mock_manager, sample_elevation, sample_crs, sample_transform
@@ -1069,6 +1106,311 @@ class TestFetchAspect:
 
 
 # ===================================================================
+# Terrain analysis: fetch_curvature
+# ===================================================================
+
+
+class TestFetchCurvature:
+    """Tests for DEMManager.fetch_curvature()."""
+
+    async def test_fetch_curvature_success(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        curv_arr = np.ones((100, 100), dtype=np.float32) * 0.005
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_curvature",
+                return_value=curv_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.curvature_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_curvature(bbox=[7.0, 46.0, 8.0, 47.0], source="cop30")
+
+        assert isinstance(result, TerrainResult)
+        assert result.artifact_ref.startswith("dem/")
+        assert result.crs == str(sample_crs)
+        assert result.resolution_m == 30
+        assert result.value_range[0] == pytest.approx(0.005, rel=1e-5)
+        assert result.value_range[1] == pytest.approx(0.005, rel=1e-5)
+
+    async def test_fetch_curvature_invalid_source(self, mock_manager):
+        with pytest.raises(ValueError, match="Unknown DEM source"):
+            await mock_manager.fetch_curvature(bbox=[7.0, 46.0, 8.0, 47.0], source="nonexistent")
+
+    async def test_fetch_curvature_png_format(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        curv_arr = np.ones((100, 100), dtype=np.float32) * 0.01
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_curvature",
+                return_value=curv_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.curvature_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_curvature(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30", output_format="png"
+            )
+
+        assert isinstance(result, TerrainResult)
+        assert result.artifact_ref.startswith("dem/")
+
+
+# ===================================================================
+# Terrain analysis: fetch_tri
+# ===================================================================
+
+
+class TestFetchTRI:
+    """Tests for DEMManager.fetch_tri()."""
+
+    async def test_fetch_tri_success(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        tri_arr = np.ones((100, 100), dtype=np.float32) * 50.0
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_tri",
+                return_value=tri_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.tri_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_tri(bbox=[7.0, 46.0, 8.0, 47.0], source="cop30")
+
+        assert isinstance(result, TerrainResult)
+        assert result.artifact_ref.startswith("dem/")
+        assert result.crs == str(sample_crs)
+        assert result.resolution_m == 30
+        assert result.value_range == [50.0, 50.0]
+
+    async def test_fetch_tri_invalid_source(self, mock_manager):
+        with pytest.raises(ValueError, match="Unknown DEM source"):
+            await mock_manager.fetch_tri(bbox=[7.0, 46.0, 8.0, 47.0], source="nonexistent")
+
+    async def test_fetch_tri_png_format(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        tri_arr = np.ones((100, 100), dtype=np.float32) * 75.0
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_tri",
+                return_value=tri_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.tri_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_tri(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30", output_format="png"
+            )
+
+        assert isinstance(result, TerrainResult)
+        assert result.artifact_ref.startswith("dem/")
+
+
+# ===================================================================
+# Contour: fetch_contours
+# ===================================================================
+
+
+class TestFetchContours:
+    """Tests for DEMManager.fetch_contours()."""
+
+    async def test_fetch_contours_success(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        from unittest.mock import patch, MagicMock
+
+        contour_array = np.full_like(sample_elevation, np.nan, dtype=np.float32)
+        contour_array[10, :] = 200.0
+        contour_array[50, :] = 300.0
+        levels = [200.0, 300.0]
+
+        with (
+            patch("chuk_mcp_dem.core.raster_io.read_and_merge_tiles") as mock_read,
+            patch("chuk_mcp_dem.core.raster_io.fill_voids") as mock_fill,
+            patch("chuk_mcp_dem.core.raster_io.compute_contours") as mock_contour,
+            patch("chuk_mcp_dem.core.raster_io.arrays_to_geotiff") as mock_tiff,
+            patch("chuk_mcp_dem.core.raster_io.contours_to_png") as mock_png,
+        ):
+            mock_read.return_value = (sample_elevation, sample_crs, sample_transform)
+            mock_fill.return_value = sample_elevation
+            mock_contour.return_value = (contour_array, levels)
+            mock_tiff.return_value = b"fake-tiff"
+            mock_png.return_value = b"\x89PNG-fake"
+
+            mock_manager._get_tile_urls = MagicMock(return_value=["https://example.com/tile.tif"])
+
+            result = await mock_manager.fetch_contours(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30", interval_m=100.0
+            )
+
+            assert result.artifact_ref is not None
+            assert result.interval_m == 100.0
+            assert result.contour_count == 2
+            assert result.crs == str(sample_crs)
+            assert result.shape == list(contour_array.shape)
+
+    async def test_fetch_contours_png_output(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        from unittest.mock import patch, MagicMock
+
+        contour_array = np.full_like(sample_elevation, np.nan, dtype=np.float32)
+        levels = [200.0]
+
+        with (
+            patch("chuk_mcp_dem.core.raster_io.read_and_merge_tiles") as mock_read,
+            patch("chuk_mcp_dem.core.raster_io.fill_voids") as mock_fill,
+            patch("chuk_mcp_dem.core.raster_io.compute_contours") as mock_contour,
+            patch("chuk_mcp_dem.core.raster_io.contours_to_png") as mock_png,
+        ):
+            mock_read.return_value = (sample_elevation, sample_crs, sample_transform)
+            mock_fill.return_value = sample_elevation
+            mock_contour.return_value = (contour_array, levels)
+            mock_png.return_value = b"\x89PNG-fake"
+
+            mock_manager._get_tile_urls = MagicMock(return_value=["https://example.com/tile.tif"])
+
+            result = await mock_manager.fetch_contours(
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                source="cop30",
+                interval_m=100.0,
+                output_format="png",
+            )
+
+            assert result.artifact_ref is not None
+            mock_png.assert_called_once()
+
+    async def test_fetch_contours_empty_tiles(self, mock_manager):
+        from unittest.mock import MagicMock
+
+        mock_manager._get_tile_urls = MagicMock(return_value=[])
+        with pytest.raises(ValueError, match="does not cover"):
+            await mock_manager.fetch_contours(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30", interval_m=100.0
+            )
+
+
+# ===================================================================
+# Watershed: fetch_watershed
+# ===================================================================
+
+
+class TestFetchWatershed:
+    """Tests for DEMManager.fetch_watershed()."""
+
+    async def test_fetch_watershed_success(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        from unittest.mock import patch, MagicMock
+
+        accum_arr = np.ones((100, 100), dtype=np.float32) * 10.0
+        accum_arr[50, 50] = 5000.0
+
+        with (
+            patch("chuk_mcp_dem.core.raster_io.read_and_merge_tiles") as mock_read,
+            patch("chuk_mcp_dem.core.raster_io.fill_voids") as mock_fill,
+            patch("chuk_mcp_dem.core.raster_io.compute_flow_accumulation") as mock_accum,
+            patch("chuk_mcp_dem.core.raster_io.arrays_to_geotiff") as mock_tiff,
+            patch("chuk_mcp_dem.core.raster_io.watershed_to_png") as mock_png,
+        ):
+            mock_read.return_value = (sample_elevation, sample_crs, sample_transform)
+            mock_fill.return_value = sample_elevation
+            mock_accum.return_value = accum_arr
+            mock_tiff.return_value = b"fake-tiff"
+            mock_png.return_value = b"\x89PNG-fake"
+
+            mock_manager._get_tile_urls = MagicMock(return_value=["https://example.com/tile.tif"])
+
+            result = await mock_manager.fetch_watershed(bbox=[7.0, 46.0, 8.0, 47.0], source="cop30")
+
+            assert result.artifact_ref is not None
+            assert result.crs == str(sample_crs)
+            assert result.shape == [100, 100]
+            assert result.value_range == [pytest.approx(10.0), pytest.approx(5000.0)]
+            assert result.dtype == "float32"
+
+    async def test_fetch_watershed_png_output(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        from unittest.mock import patch, MagicMock
+
+        accum_arr = np.ones((100, 100), dtype=np.float32)
+
+        with (
+            patch("chuk_mcp_dem.core.raster_io.read_and_merge_tiles") as mock_read,
+            patch("chuk_mcp_dem.core.raster_io.fill_voids") as mock_fill,
+            patch("chuk_mcp_dem.core.raster_io.compute_flow_accumulation") as mock_accum,
+            patch("chuk_mcp_dem.core.raster_io.watershed_to_png") as mock_png,
+        ):
+            mock_read.return_value = (sample_elevation, sample_crs, sample_transform)
+            mock_fill.return_value = sample_elevation
+            mock_accum.return_value = accum_arr
+            mock_png.return_value = b"\x89PNG-fake"
+
+            mock_manager._get_tile_urls = MagicMock(return_value=["https://example.com/tile.tif"])
+
+            result = await mock_manager.fetch_watershed(
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                source="cop30",
+                output_format="png",
+            )
+
+            assert result.artifact_ref is not None
+            mock_png.assert_called_once()
+
+    async def test_fetch_watershed_empty_tiles(self, mock_manager):
+        from unittest.mock import MagicMock
+
+        mock_manager._get_tile_urls = MagicMock(return_value=[])
+        with pytest.raises(ValueError, match="does not cover"):
+            await mock_manager.fetch_watershed(bbox=[7.0, 46.0, 8.0, 47.0], source="cop30")
+
+    async def test_fetch_watershed_invalid_source(self, mock_manager):
+        with pytest.raises(ValueError, match="Unknown DEM source"):
+            await mock_manager.fetch_watershed(bbox=[7.0, 46.0, 8.0, 47.0], source="invalid_source")
+
+
+# ===================================================================
 # Profile: fetch_profile
 # ===================================================================
 
@@ -1146,7 +1488,7 @@ class TestFetchProfile:
     async def test_fetch_profile_no_coverage(self, mock_manager):
         """Source with no tile URL constructor raises."""
         with pytest.raises(ValueError, match="does not cover"):
-            await mock_manager.fetch_profile(start=[7.0, 46.0], end=[8.0, 47.0], source="srtm")
+            await mock_manager.fetch_profile(start=[7.0, 46.0], end=[8.0, 47.0], source="aster")
 
     async def test_fetch_profile_all_nan(
         self, mock_manager, sample_elevation, sample_crs, sample_transform
@@ -1264,7 +1606,7 @@ class TestFetchViewshed:
     async def test_fetch_viewshed_no_coverage(self, mock_manager):
         """Source with no tile URL constructor raises."""
         with pytest.raises(ValueError, match="does not cover"):
-            await mock_manager.fetch_viewshed(observer=[7.5, 46.5], radius_m=1000.0, source="srtm")
+            await mock_manager.fetch_viewshed(observer=[7.5, 46.5], radius_m=1000.0, source="aster")
 
     async def test_fetch_viewshed_all_visible(
         self, mock_manager, sample_elevation, sample_crs, sample_transform

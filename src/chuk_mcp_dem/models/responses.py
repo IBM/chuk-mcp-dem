@@ -193,6 +193,7 @@ class FetchResponse(BaseModel):
     elevation_range: list[float] = Field(..., description="[min, max] elevation in metres")
     dtype: str = Field(..., description="Data type of the array")
     nodata_pixels: int = Field(..., description="Number of nodata pixels", ge=0)
+    license_warning: str | None = Field(None, description="License restriction warning")
     message: str = Field(..., description="Operation result message")
 
     def to_text(self) -> str:
@@ -208,6 +209,8 @@ class FetchResponse(BaseModel):
         ]
         if self.preview_ref:
             lines.append(f"Preview: {self.preview_ref}")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
         return "\n".join(lines)
 
 
@@ -222,6 +225,7 @@ class PointElevationResponse(BaseModel):
     elevation_m: float = Field(..., description="Elevation in metres")
     interpolation: str = Field(..., description="Interpolation method used")
     uncertainty_m: float = Field(..., description="Estimated vertical uncertainty in metres")
+    license_warning: str | None = Field(None, description="License restriction warning")
     message: str = Field(..., description="Operation result message")
 
     def to_text(self) -> str:
@@ -231,6 +235,8 @@ class PointElevationResponse(BaseModel):
             f"Interpolation: {self.interpolation}",
             f"Uncertainty: +/-{self.uncertainty_m:.1f}m",
         ]
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
         return "\n".join(lines)
 
 
@@ -254,6 +260,7 @@ class MultiPointResponse(BaseModel):
     points: list[PointInfo] = Field(..., description="Elevation results per point")
     elevation_range: list[float] = Field(..., description="[min, max] elevation across all points")
     interpolation: str = Field(..., description="Interpolation method used")
+    license_warning: str | None = Field(None, description="License restriction warning")
     message: str = Field(..., description="Operation result message")
 
     def to_text(self) -> str:
@@ -266,6 +273,8 @@ class MultiPointResponse(BaseModel):
         ]
         for p in self.points:
             lines.append(f"  ({p.lon:.6f}, {p.lat:.6f}): {p.elevation_m:.1f}m")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
         return "\n".join(lines)
 
 
@@ -349,6 +358,7 @@ class HillshadeResponse(BaseModel):
     shape: list[int] = Field(..., description="Array shape [height, width]")
     value_range: list[float] = Field(..., description="[min, max] hillshade values")
     output_format: str = Field(..., description="Output format (geotiff or png)")
+    license_warning: str | None = Field(None, description="License restriction warning")
     message: str = Field(..., description="Operation result message")
 
     def to_text(self) -> str:
@@ -364,6 +374,8 @@ class HillshadeResponse(BaseModel):
         ]
         if self.preview_ref:
             lines.append(f"Preview: {self.preview_ref}")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
         return "\n".join(lines)
 
 
@@ -382,6 +394,7 @@ class SlopeResponse(BaseModel):
     shape: list[int] = Field(..., description="Array shape [height, width]")
     value_range: list[float] = Field(..., description="[min, max] slope values")
     output_format: str = Field(..., description="Output format (geotiff or png)")
+    license_warning: str | None = Field(None, description="License restriction warning")
     message: str = Field(..., description="Operation result message")
 
     def to_text(self) -> str:
@@ -395,6 +408,8 @@ class SlopeResponse(BaseModel):
         ]
         if self.preview_ref:
             lines.append(f"Preview: {self.preview_ref}")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
         return "\n".join(lines)
 
 
@@ -413,6 +428,7 @@ class AspectResponse(BaseModel):
     shape: list[int] = Field(..., description="Array shape [height, width]")
     value_range: list[float] = Field(..., description="[min, max] aspect values")
     output_format: str = Field(..., description="Output format (geotiff or png)")
+    license_warning: str | None = Field(None, description="License restriction warning")
     message: str = Field(..., description="Operation result message")
 
     def to_text(self) -> str:
@@ -427,6 +443,111 @@ class AspectResponse(BaseModel):
         ]
         if self.preview_ref:
             lines.append(f"Preview: {self.preview_ref}")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
+        return "\n".join(lines)
+
+
+class CurvatureResponse(BaseModel):
+    """Response model for curvature computation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., description="DEM source used")
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    artifact_ref: str = Field(..., description="Artifact store reference for curvature data")
+    preview_ref: str | None = Field(None, description="PNG preview artifact reference")
+    crs: str = Field(..., description="Coordinate reference system")
+    resolution_m: float = Field(..., description="Output resolution in metres")
+    shape: list[int] = Field(..., description="Array shape [height, width]")
+    value_range: list[float] = Field(..., description="[min, max] curvature values (1/m)")
+    output_format: str = Field(..., description="Output format (geotiff or png)")
+    license_warning: str | None = Field(None, description="License restriction warning")
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        shape_str = f"{self.shape[0]}x{self.shape[1]}"
+        lines = [
+            f"Curvature: {self.source}",
+            f"Artifact: {self.artifact_ref}",
+            f"Shape: {shape_str} ({self.crs}, {self.resolution_m}m)",
+            f"Value range: {self.value_range[0]:.6f} to {self.value_range[1]:.6f} (1/m)",
+            f"Format: {self.output_format}",
+        ]
+        if self.preview_ref:
+            lines.append(f"Preview: {self.preview_ref}")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
+        return "\n".join(lines)
+
+
+class TRIResponse(BaseModel):
+    """Response model for Terrain Ruggedness Index computation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., description="DEM source used")
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    artifact_ref: str = Field(..., description="Artifact store reference for TRI data")
+    preview_ref: str | None = Field(None, description="PNG preview artifact reference")
+    crs: str = Field(..., description="Coordinate reference system")
+    resolution_m: float = Field(..., description="Output resolution in metres")
+    shape: list[int] = Field(..., description="Array shape [height, width]")
+    value_range: list[float] = Field(..., description="[min, max] TRI values (metres)")
+    output_format: str = Field(..., description="Output format (geotiff or png)")
+    license_warning: str | None = Field(None, description="License restriction warning")
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        shape_str = f"{self.shape[0]}x{self.shape[1]}"
+        lines = [
+            f"Terrain Ruggedness: {self.source}",
+            f"Artifact: {self.artifact_ref}",
+            f"Shape: {shape_str} ({self.crs}, {self.resolution_m}m)",
+            f"Value range: {self.value_range[0]:.1f}m to {self.value_range[1]:.1f}m",
+            f"Format: {self.output_format}",
+        ]
+        if self.preview_ref:
+            lines.append(f"Preview: {self.preview_ref}")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
+        return "\n".join(lines)
+
+
+class ContourResponse(BaseModel):
+    """Response model for contour line generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., description="DEM source used")
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    artifact_ref: str = Field(..., description="Artifact store reference for contour data")
+    preview_ref: str | None = Field(None, description="PNG preview artifact reference")
+    crs: str = Field(..., description="Coordinate reference system")
+    resolution_m: float = Field(..., description="Output resolution in metres")
+    shape: list[int] = Field(..., description="Array shape [height, width]")
+    interval_m: float = Field(..., description="Contour interval in metres")
+    contour_count: int = Field(..., description="Number of contour levels generated")
+    elevation_range: list[float] = Field(..., description="[min, max] elevation in metres")
+    output_format: str = Field(..., description="Output format (geotiff or png)")
+    license_warning: str | None = Field(None, description="License restriction warning")
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        shape_str = f"{self.shape[0]}x{self.shape[1]}"
+        elev_min, elev_max = self.elevation_range
+        lines = [
+            f"Contours: {self.source}",
+            f"Artifact: {self.artifact_ref}",
+            f"Shape: {shape_str} ({self.crs}, {self.resolution_m}m)",
+            f"Interval: {self.interval_m}m ({self.contour_count} levels)",
+            f"Elevation: {elev_min:.1f}m to {elev_max:.1f}m",
+            f"Format: {self.output_format}",
+        ]
+        if self.preview_ref:
+            lines.append(f"Preview: {self.preview_ref}")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
         return "\n".join(lines)
 
 
@@ -461,6 +582,7 @@ class ProfileResponse(BaseModel):
     elevation_gain_m: float = Field(..., description="Total elevation gain in metres")
     elevation_loss_m: float = Field(..., description="Total elevation loss in metres")
     interpolation: str = Field(..., description="Interpolation method used")
+    license_warning: str | None = Field(None, description="License restriction warning")
     message: str = Field(..., description="Operation result message")
 
     def to_text(self) -> str:
@@ -474,6 +596,8 @@ class ProfileResponse(BaseModel):
             f"Gain: {self.elevation_gain_m:.1f}m, Loss: {self.elevation_loss_m:.1f}m",
             f"Interpolation: {self.interpolation}",
         ]
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
         return "\n".join(lines)
 
 
@@ -494,6 +618,7 @@ class ViewshedResponse(BaseModel):
     shape: list[int] = Field(..., description="Array shape [height, width]")
     visible_percentage: float = Field(..., description="Percentage of area visible", ge=0, le=100)
     output_format: str = Field(..., description="Output format (geotiff or png)")
+    license_warning: str | None = Field(None, description="License restriction warning")
     message: str = Field(..., description="Operation result message")
 
     def to_text(self) -> str:
@@ -510,4 +635,46 @@ class ViewshedResponse(BaseModel):
         ]
         if self.preview_ref:
             lines.append(f"Preview: {self.preview_ref}")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Watershed response (Phase 2.1)
+# ---------------------------------------------------------------------------
+
+
+class WatershedResponse(BaseModel):
+    """Response model for watershed (flow accumulation) computation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., description="DEM source used")
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    artifact_ref: str = Field(..., description="Artifact store reference for watershed data")
+    preview_ref: str | None = Field(None, description="PNG preview artifact reference")
+    crs: str = Field(..., description="Coordinate reference system")
+    resolution_m: float = Field(..., description="Output resolution in metres")
+    shape: list[int] = Field(..., description="Array shape [height, width]")
+    value_range: list[float] = Field(
+        ..., description="[min, max] flow accumulation (contributing cells)"
+    )
+    output_format: str = Field(..., description="Output format (geotiff or png)")
+    license_warning: str | None = Field(None, description="License restriction warning")
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        shape_str = f"{self.shape[0]}x{self.shape[1]}"
+        lines = [
+            f"Watershed: {self.source}",
+            f"Artifact: {self.artifact_ref}",
+            f"Shape: {shape_str} ({self.crs}, {self.resolution_m}m)",
+            f"Flow accumulation: {self.value_range[0]:.0f} to {self.value_range[1]:.0f} cells",
+            f"Format: {self.output_format}",
+        ]
+        if self.preview_ref:
+            lines.append(f"Preview: {self.preview_ref}")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
         return "\n".join(lines)

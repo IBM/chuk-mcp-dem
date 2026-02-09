@@ -472,6 +472,339 @@ def aspect_to_png(
 # ---------------------------------------------------------------------------
 
 
+def compute_curvature(
+    elevation: FloatArray,
+    transform: Transform,
+) -> FloatArray:
+    """Compute profile curvature from elevation data.
+
+    Profile curvature is the rate of change of slope along the direction
+    of maximum slope. Positive values indicate convex surfaces (ridges),
+    negative values indicate concave surfaces (valleys), and near-zero
+    values indicate planar surfaces.
+
+    Uses the second-order finite difference method on a 3x3 moving window.
+
+    Args:
+        elevation: 2D elevation array
+        transform: Affine transform (for cell size)
+
+    Returns:
+        Curvature array (units: 1/m, float32)
+    """
+    cellsize_x = abs(transform[0])
+    cellsize_y = abs(transform[4])
+
+    padded = np.pad(elevation, 1, mode="edge")
+    padded = np.nan_to_num(padded, nan=0.0)
+
+    # Zevenbergen-Thorne (1987) second derivatives using 3x3 window
+    # Neighbours: N, S, W, E, centre
+    z_n = padded[:-2, 1:-1]
+    z_w = padded[1:-1, :-2]
+    z_c = padded[1:-1, 1:-1]
+    z_e = padded[1:-1, 2:]
+    z_s = padded[2:, 1:-1]
+
+    # Second derivatives
+    d2z_dx2 = (z_w + z_e - 2 * z_c) / (cellsize_x**2)
+    d2z_dy2 = (z_n + z_s - 2 * z_c) / (cellsize_y**2)
+
+    # Profile curvature (Laplacian approximation)
+    curvature = d2z_dx2 + d2z_dy2
+
+    return curvature.astype(np.float32)
+
+
+def curvature_to_png(
+    curvature: FloatArray,
+) -> bytes:
+    """Generate a curvature PNG with diverging blue-white-red colour ramp.
+
+    Blue = concave (valleys), White = flat, Red = convex (ridges).
+
+    Args:
+        curvature: 2D curvature array
+
+    Returns:
+        PNG bytes
+    """
+    # Symmetric normalisation around zero
+    abs_max = max(float(np.nanmax(np.abs(curvature))), 1e-10)
+    norm = np.clip(np.nan_to_num(curvature, nan=0.0) / abs_max, -1.0, 1.0)
+
+    # Diverging colour ramp: blue (-1) -> white (0) -> red (+1)
+    r = np.where(norm >= 0, 255, (1 + norm) * 255).astype(np.uint8)
+    g = np.where(norm >= 0, (1 - norm) * 255, (1 + norm) * 255).astype(np.uint8)
+    b = np.where(norm <= 0, 255, (1 - norm) * 255).astype(np.uint8)
+
+    rgb = np.stack([r, g, b], axis=-1)
+    img = Image.fromarray(rgb, mode="RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def compute_tri(
+    elevation: FloatArray,
+    transform: Transform,
+) -> FloatArray:
+    """Compute Terrain Ruggedness Index (TRI) from elevation data.
+
+    TRI measures the mean absolute difference between a cell and its
+    8 neighbours, following Riley et al. (1999).
+
+    Classification:
+        0-80m:    Level
+        81-116m:  Nearly level
+        117-161m: Slightly rugged
+        162-239m: Intermediately rugged
+        240-497m: Moderately rugged
+        498-958m: Highly rugged
+        959+m:    Extremely rugged
+
+    Args:
+        elevation: 2D elevation array
+        transform: Affine transform (not used for TRI but kept for API consistency)
+
+    Returns:
+        TRI array (metres, float32)
+    """
+    padded = np.pad(elevation, 1, mode="edge")
+    padded = np.nan_to_num(padded, nan=0.0)
+
+    centre = padded[1:-1, 1:-1]
+
+    # Sum of absolute differences with 8 neighbours
+    tri = np.zeros_like(centre, dtype=np.float64)
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            if dr == 0 and dc == 0:
+                continue
+            neighbour = padded[1 + dr : padded.shape[0] - 1 + dr, 1 + dc : padded.shape[1] - 1 + dc]
+            tri += np.abs(neighbour - centre)
+
+    tri /= 8.0  # mean absolute difference
+
+    return tri.astype(np.float32)
+
+
+def tri_to_png(
+    tri: FloatArray,
+) -> bytes:
+    """Generate a TRI PNG with green-yellow-orange-red colour ramp.
+
+    Green = level, Yellow = slightly rugged, Orange = moderate, Red = extreme.
+
+    Args:
+        tri: 2D TRI array (metres)
+
+    Returns:
+        PNG bytes
+    """
+    # Normalise to 0-500m range (covers level to moderately rugged)
+    max_val = 500.0
+    norm = np.clip(np.nan_to_num(tri, nan=0.0) / max_val, 0.0, 1.0)
+
+    # Green -> Yellow -> Orange -> Red
+    r = np.clip(norm * 3.0, 0, 1) * 255
+    g = np.clip(1.0 - norm * 1.5, 0, 1) * 255
+    b = np.zeros_like(norm)
+
+    rgb = np.stack([r, g, b], axis=-1).astype(np.uint8)
+    img = Image.fromarray(rgb, mode="RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def compute_contours(
+    elevation: FloatArray,
+    transform: Transform,
+    interval_m: float,
+    base_m: float | None = None,
+) -> tuple[FloatArray, list[float]]:
+    """Generate rasterised contour lines from elevation data.
+
+    For each contour level, detects pixels where the elevation crosses that
+    level by checking sign changes in (elevation - level) between adjacent
+    pixels horizontally and vertically. Contour pixels are set to their
+    elevation level value; non-contour pixels are NaN.
+
+    Args:
+        elevation: 2D elevation array
+        transform: Affine transform (kept for API consistency)
+        interval_m: Elevation interval between contour lines (metres)
+        base_m: Base elevation for first contour (default: auto from data)
+
+    Returns:
+        Tuple of (contour raster, list of contour levels)
+    """
+    clean = np.nan_to_num(elevation, nan=0.0).astype(np.float64)
+    elev_min = float(np.nanmin(elevation))
+    elev_max = float(np.nanmax(elevation))
+
+    if base_m is None:
+        base_m = math.floor(elev_min / interval_m) * interval_m
+
+    levels = []
+    lvl = base_m
+    while lvl <= elev_max:
+        if lvl >= elev_min:
+            levels.append(lvl)
+        lvl += interval_m
+
+    result = np.full_like(elevation, np.nan, dtype=np.float32)
+
+    for level in levels:
+        diff = clean - level
+        # Horizontal crossings: sign change between adjacent columns
+        h_cross = diff[:, :-1] * diff[:, 1:] <= 0
+        # Vertical crossings: sign change between adjacent rows
+        v_cross = diff[:-1, :] * diff[1:, :] <= 0
+        # Mark crossing pixels
+        mask = np.zeros(elevation.shape, dtype=bool)
+        mask[:, :-1] |= h_cross
+        mask[:, 1:] |= h_cross
+        mask[:-1, :] |= v_cross
+        mask[1:, :] |= v_cross
+        result[mask] = level
+
+    return result, levels
+
+
+def contours_to_png(
+    elevation: FloatArray,
+    contours: FloatArray,
+) -> bytes:
+    """Generate a PNG with contour lines overlaid on terrain background.
+
+    Background uses a green-brown-white terrain colour ramp.
+    Contour lines are drawn in dark brown.
+
+    Args:
+        elevation: 2D elevation array (for background colouring)
+        contours: 2D contour raster (NaN = no contour, value = contour level)
+
+    Returns:
+        PNG bytes
+    """
+    clean_elev = np.nan_to_num(elevation, nan=0.0)
+    emin = float(np.nanmin(elevation))
+    emax = float(np.nanmax(elevation))
+    rng = max(emax - emin, 1e-10)
+    norm = np.clip((clean_elev - emin) / rng, 0.0, 1.0)
+
+    # Terrain colour ramp: green -> brown -> white
+    r = np.clip(norm * 2.0, 0, 1) * 200 + 30
+    g = np.clip(1.0 - norm * 0.5, 0, 1) * 200 + 30
+    b = np.clip(norm - 0.5, 0, 0.5) * 200 + 30
+    r = np.clip(r, 0, 255)
+    g = np.clip(g, 0, 255)
+    b = np.clip(b, 0, 255)
+
+    # Overlay contour lines in dark brown
+    contour_mask = ~np.isnan(contours)
+    r[contour_mask] = 60
+    g[contour_mask] = 30
+    b[contour_mask] = 10
+
+    rgb = np.stack([r, g, b], axis=-1).astype(np.uint8)
+    img = Image.fromarray(rgb, mode="RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def compute_flow_accumulation(
+    elevation: FloatArray,
+    transform: Transform,
+) -> FloatArray:
+    """Compute flow accumulation using the D8 single-flow-direction algorithm.
+
+    For each cell, water flows to the steepest downhill neighbour (D8).
+    Flow accumulation counts the number of upstream cells draining through
+    each cell. High values indicate streams and drainage channels.
+
+    Args:
+        elevation: 2D elevation array
+        transform: Affine transform (kept for API consistency)
+
+    Returns:
+        Flow accumulation array (float32, units: contributing cells)
+    """
+    elev = np.nan_to_num(elevation, nan=0.0).astype(np.float64)
+    rows, cols = elev.shape
+
+    # D8 neighbour offsets: (row_offset, col_offset)
+    d8_dr = np.array([-1, -1, 0, 1, 1, 1, 0, -1], dtype=np.intp)
+    d8_dc = np.array([0, 1, 1, 1, 0, -1, -1, -1], dtype=np.intp)
+
+    # Compute flow direction for each cell (index into d8 neighbours, -1 = pit)
+    flow_dir = np.full((rows, cols), -1, dtype=np.intp)
+
+    for r in range(rows):
+        for c in range(cols):
+            max_drop = 0.0
+            best = -1
+            for k in range(8):
+                nr = r + d8_dr[k]
+                nc = c + d8_dc[k]
+                if 0 <= nr < rows and 0 <= nc < cols:
+                    drop = elev[r, c] - elev[nr, nc]
+                    if drop > max_drop:
+                        max_drop = drop
+                        best = k
+            flow_dir[r, c] = best
+
+    # Topological sort: process cells from highest to lowest elevation
+    flat_indices = np.argsort(elev, axis=None)[::-1]
+
+    accum = np.ones((rows, cols), dtype=np.float64)
+
+    for idx in flat_indices:
+        r = idx // cols
+        c = idx % cols
+        k = flow_dir[r, c]
+        if k >= 0:
+            nr = r + d8_dr[k]
+            nc = c + d8_dc[k]
+            accum[nr, nc] += accum[r, c]
+
+    return accum.astype(np.float32)
+
+
+def watershed_to_png(
+    accumulation: FloatArray,
+) -> bytes:
+    """Generate a watershed PNG with log-scaled blue colour ramp.
+
+    Low accumulation (hilltops) is light, high accumulation (streams) is
+    dark blue. Uses log scaling to reveal the drainage network.
+
+    Args:
+        accumulation: 2D flow accumulation array (cell counts)
+
+    Returns:
+        PNG bytes
+    """
+    # Log-scale the accumulation (add 1 to avoid log(0))
+    log_acc = np.log1p(np.nan_to_num(accumulation, nan=0.0))
+    max_val = max(float(np.max(log_acc)), 1e-10)
+    norm = np.clip(log_acc / max_val, 0.0, 1.0)
+
+    # Light blue (low) -> Dark blue (high)
+    r = ((1.0 - norm) * 200 + 20).astype(np.uint8)
+    g = ((1.0 - norm) * 200 + 30).astype(np.uint8)
+    b = (norm * 155 + 100).astype(np.uint8)
+
+    rgb = np.stack([r, g, b], axis=-1)
+    img = Image.fromarray(rgb, mode="RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def compute_slope(
     elevation: FloatArray,
     transform: Transform,

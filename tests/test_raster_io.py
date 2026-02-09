@@ -811,6 +811,363 @@ class TestComputeAspect:
 
 
 # ---------------------------------------------------------------------------
+# compute_curvature
+# ---------------------------------------------------------------------------
+
+
+class TestComputeCurvature:
+    """Tests for compute_curvature() -- profile curvature."""
+
+    def test_flat_surface_zero_curvature(self, sample_transform):
+        """Flat surface has zero curvature everywhere."""
+        from chuk_mcp_dem.core.raster_io import compute_curvature
+
+        flat = np.ones((50, 50), dtype=np.float32) * 100.0
+        curv = compute_curvature(flat, sample_transform)
+        np.testing.assert_allclose(curv, 0.0, atol=1e-5)
+
+    def test_linear_ramp_zero_curvature(self, sample_transform):
+        """Linear ramp (constant slope) has near-zero curvature."""
+        from chuk_mcp_dem.core.raster_io import compute_curvature
+
+        ramp = np.tile(np.arange(50, dtype=np.float32), (50, 1))
+        curv = compute_curvature(ramp, sample_transform)
+        # Interior should be near zero (linear = constant first derivative)
+        interior = curv[5:45, 5:45]
+        np.testing.assert_allclose(interior, 0.0, atol=1e-3)
+
+    def test_convex_surface_positive(self, sample_transform):
+        """Convex (bowl-shaped) surface has positive curvature."""
+        from chuk_mcp_dem.core.raster_io import compute_curvature
+
+        y, x = np.mgrid[0:50, 0:50]
+        bowl = ((x - 25.0) ** 2 + (y - 25.0) ** 2).astype(np.float32)
+        curv = compute_curvature(bowl, sample_transform)
+        # Interior should be positive (concave up)
+        interior = curv[10:40, 10:40]
+        assert np.mean(interior) > 0
+
+    def test_concave_surface_negative(self, sample_transform):
+        """Concave (dome-shaped) surface has negative curvature."""
+        from chuk_mcp_dem.core.raster_io import compute_curvature
+
+        y, x = np.mgrid[0:50, 0:50]
+        dome = -((x - 25.0) ** 2 + (y - 25.0) ** 2).astype(np.float32)
+        curv = compute_curvature(dome, sample_transform)
+        interior = curv[10:40, 10:40]
+        assert np.mean(interior) < 0
+
+    def test_output_dtype_float32(self, sample_elevation, sample_transform):
+        """Output dtype is float32."""
+        from chuk_mcp_dem.core.raster_io import compute_curvature
+
+        curv = compute_curvature(sample_elevation, sample_transform)
+        assert curv.dtype == np.float32
+
+    def test_output_shape_matches_input(self, sample_elevation, sample_transform):
+        """Output shape matches input."""
+        from chuk_mcp_dem.core.raster_io import compute_curvature
+
+        curv = compute_curvature(sample_elevation, sample_transform)
+        assert curv.shape == sample_elevation.shape
+
+    def test_nan_handling(self, sample_transform):
+        """NaN values are handled via nan_to_num."""
+        from chuk_mcp_dem.core.raster_io import compute_curvature
+
+        arr = np.ones((10, 10), dtype=np.float32) * 100.0
+        arr[5, 5] = np.nan
+        curv = compute_curvature(arr, sample_transform)
+        assert curv.shape == (10, 10)
+        assert not np.any(np.isnan(curv))
+
+
+# ---------------------------------------------------------------------------
+# curvature_to_png
+# ---------------------------------------------------------------------------
+
+
+class TestCurvatureToPng:
+    """Tests for curvature_to_png() -- diverging blue-white-red ramp."""
+
+    def test_produces_valid_png(self, sample_elevation, sample_transform):
+        """Output is valid PNG bytes."""
+        from chuk_mcp_dem.core.raster_io import compute_curvature, curvature_to_png
+
+        curv = compute_curvature(sample_elevation, sample_transform)
+        png_bytes = curvature_to_png(curv)
+        assert isinstance(png_bytes, bytes)
+        assert len(png_bytes) > 0
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.mode == "RGB"
+        assert img.size == (100, 100)
+
+    def test_zero_curvature_is_white(self):
+        """Zero curvature maps to white in diverging ramp."""
+        from chuk_mcp_dem.core.raster_io import curvature_to_png
+
+        zero = np.zeros((10, 10), dtype=np.float32)
+        png_bytes = curvature_to_png(zero)
+        img = Image.open(io.BytesIO(png_bytes))
+        pixel = img.getpixel((5, 5))
+        # White = (255, 255, 255)
+        assert pixel[0] == 255
+        assert pixel[1] == 255
+        assert pixel[2] == 255
+
+    def test_output_dimensions_match(self):
+        """PNG dimensions match input array."""
+        from chuk_mcp_dem.core.raster_io import curvature_to_png
+
+        arr = np.random.uniform(-1, 1, (30, 40)).astype(np.float32)
+        png_bytes = curvature_to_png(arr)
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.size == (40, 30)  # PIL size is (width, height)
+
+
+# ---------------------------------------------------------------------------
+# compute_tri
+# ---------------------------------------------------------------------------
+
+
+class TestComputeTRI:
+    """Tests for compute_tri() -- Terrain Ruggedness Index."""
+
+    def test_flat_surface_zero_tri(self, sample_transform):
+        """Flat surface has zero TRI."""
+        from chuk_mcp_dem.core.raster_io import compute_tri
+
+        flat = np.ones((50, 50), dtype=np.float32) * 100.0
+        tri = compute_tri(flat, sample_transform)
+        np.testing.assert_allclose(tri, 0.0, atol=1e-5)
+
+    def test_rough_surface_positive_tri(self, sample_elevation, sample_transform):
+        """Random elevation (100-500m range) produces positive TRI."""
+        from chuk_mcp_dem.core.raster_io import compute_tri
+
+        tri = compute_tri(sample_elevation, sample_transform)
+        assert np.mean(tri) > 0
+
+    def test_checkerboard_max_ruggedness(self, sample_transform):
+        """Checkerboard pattern produces high TRI."""
+        from chuk_mcp_dem.core.raster_io import compute_tri
+
+        checker = np.zeros((20, 20), dtype=np.float32)
+        checker[::2, ::2] = 1000.0
+        checker[1::2, 1::2] = 1000.0
+        tri = compute_tri(checker, sample_transform)
+        # Interior pixels should have high TRI
+        interior = tri[2:18, 2:18]
+        assert np.mean(interior) > 100
+
+    def test_output_non_negative(self, sample_elevation, sample_transform):
+        """TRI values are always non-negative."""
+        from chuk_mcp_dem.core.raster_io import compute_tri
+
+        tri = compute_tri(sample_elevation, sample_transform)
+        assert np.all(tri >= 0)
+
+    def test_output_dtype_float32(self, sample_elevation, sample_transform):
+        """Output dtype is float32."""
+        from chuk_mcp_dem.core.raster_io import compute_tri
+
+        tri = compute_tri(sample_elevation, sample_transform)
+        assert tri.dtype == np.float32
+
+    def test_output_shape_matches_input(self, sample_elevation, sample_transform):
+        """Output shape matches input."""
+        from chuk_mcp_dem.core.raster_io import compute_tri
+
+        tri = compute_tri(sample_elevation, sample_transform)
+        assert tri.shape == sample_elevation.shape
+
+    def test_nan_handling(self, sample_transform):
+        """NaN values are handled via nan_to_num."""
+        from chuk_mcp_dem.core.raster_io import compute_tri
+
+        arr = np.ones((10, 10), dtype=np.float32) * 100.0
+        arr[5, 5] = np.nan
+        tri = compute_tri(arr, sample_transform)
+        assert tri.shape == (10, 10)
+        assert not np.any(np.isnan(tri))
+
+    def test_symmetric_difference(self, sample_transform):
+        """TRI is symmetric — raising or lowering a single cell by the same amount gives same TRI."""
+        from chuk_mcp_dem.core.raster_io import compute_tri
+
+        base = np.ones((10, 10), dtype=np.float32) * 100.0
+
+        high = base.copy()
+        high[5, 5] = 200.0
+        tri_high = compute_tri(high, sample_transform)
+
+        low = base.copy()
+        low[5, 5] = 0.0
+        tri_low = compute_tri(low, sample_transform)
+
+        np.testing.assert_allclose(tri_high, tri_low, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# tri_to_png
+# ---------------------------------------------------------------------------
+
+
+class TestTriToPng:
+    """Tests for tri_to_png() -- green-yellow-orange-red ramp."""
+
+    def test_produces_valid_png(self, sample_elevation, sample_transform):
+        """Output is valid PNG bytes."""
+        from chuk_mcp_dem.core.raster_io import compute_tri, tri_to_png
+
+        tri = compute_tri(sample_elevation, sample_transform)
+        png_bytes = tri_to_png(tri)
+        assert isinstance(png_bytes, bytes)
+        assert len(png_bytes) > 0
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.mode == "RGB"
+        assert img.size == (100, 100)
+
+    def test_flat_is_dark_green(self):
+        """Zero TRI (flat) maps to dark green (low R, high G)."""
+        from chuk_mcp_dem.core.raster_io import tri_to_png
+
+        flat_tri = np.zeros((10, 10), dtype=np.float32)
+        png_bytes = tri_to_png(flat_tri)
+        img = Image.open(io.BytesIO(png_bytes))
+        pixel = img.getpixel((5, 5))
+        assert pixel[0] == 0  # R = 0 (green channel)
+        assert pixel[1] == 255  # G = 255
+
+    def test_output_dimensions_match(self):
+        """PNG dimensions match input array."""
+        from chuk_mcp_dem.core.raster_io import tri_to_png
+
+        arr = np.random.uniform(0, 100, (30, 40)).astype(np.float32)
+        png_bytes = tri_to_png(arr)
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.size == (40, 30)
+
+
+class TestComputeContours:
+    """Tests for compute_contours() -- rasterised contour line generation."""
+
+    def test_flat_surface_no_contours(self, sample_transform):
+        """Flat surface at a non-contour elevation produces no contours."""
+        from chuk_mcp_dem.core.raster_io import compute_contours
+
+        flat = np.full((50, 50), 150.0, dtype=np.float32)
+        contours, levels = compute_contours(flat, sample_transform, 100.0)
+        # 150m is not on a 100m interval, so no crossing should occur on a truly flat surface
+        # However, levels list should include 100 (which is below flat)... only 200 would cross
+        # Since the surface is uniformly 150, no pixel crosses any level
+        assert contours.shape == (50, 50)
+        assert np.all(np.isnan(contours))
+
+    def test_gradient_produces_contours(self, sample_transform):
+        """Linear gradient should produce contours at expected intervals."""
+        from chuk_mcp_dem.core.raster_io import compute_contours
+
+        gradient = np.linspace(0, 500, 100).reshape(1, -1).repeat(10, axis=0).astype(np.float32)
+        contours, levels = compute_contours(gradient, sample_transform, 100.0)
+        assert contours.shape == gradient.shape
+        # Should have contour levels at 0, 100, 200, 300, 400, 500
+        assert 100.0 in levels
+        assert 200.0 in levels
+        assert 300.0 in levels
+        # Some pixels should be marked (not all NaN)
+        assert not np.all(np.isnan(contours))
+
+    def test_contour_pixel_values_match_levels(self, sample_transform):
+        """Contour pixels should contain their contour level value."""
+        from chuk_mcp_dem.core.raster_io import compute_contours
+
+        gradient = np.linspace(50, 350, 100).reshape(1, -1).repeat(10, axis=0).astype(np.float32)
+        contours, levels = compute_contours(gradient, sample_transform, 100.0)
+        valid = contours[~np.isnan(contours)]
+        # All contour values should be one of the levels
+        for v in valid:
+            assert float(v) in levels
+
+    def test_interval_spacing(self, sample_transform):
+        """Levels should be spaced at the specified interval."""
+        from chuk_mcp_dem.core.raster_io import compute_contours
+
+        gradient = np.linspace(0, 1000, 200).reshape(1, -1).repeat(5, axis=0).astype(np.float32)
+        _, levels = compute_contours(gradient, sample_transform, 50.0)
+        for i in range(1, len(levels)):
+            assert pytest.approx(levels[i] - levels[i - 1], abs=1e-6) == 50.0
+
+    def test_custom_base(self, sample_transform):
+        """Custom base_m shifts contour alignment."""
+        from chuk_mcp_dem.core.raster_io import compute_contours
+
+        gradient = np.linspace(0, 500, 100).reshape(1, -1).repeat(5, axis=0).astype(np.float32)
+        _, levels = compute_contours(gradient, sample_transform, 100.0, base_m=25.0)
+        assert 25.0 in levels
+        assert 125.0 in levels
+        assert 225.0 in levels
+
+    def test_nan_handling(self, sample_transform):
+        """NaN values should not crash contour generation."""
+        from chuk_mcp_dem.core.raster_io import compute_contours
+
+        arr = np.linspace(0, 500, 100).reshape(1, -1).repeat(10, axis=0).astype(np.float32)
+        arr[3:5, 20:30] = np.nan
+        contours, levels = compute_contours(arr, sample_transform, 100.0)
+        assert contours.shape == arr.shape
+        assert len(levels) > 0
+
+    def test_returns_float32(self, sample_transform):
+        """Output should be float32."""
+        from chuk_mcp_dem.core.raster_io import compute_contours
+
+        gradient = np.linspace(0, 500, 100).reshape(1, -1).repeat(5, axis=0).astype(np.float32)
+        contours, _ = compute_contours(gradient, sample_transform, 100.0)
+        assert contours.dtype == np.float32
+
+    def test_small_interval(self, sample_transform):
+        """Small interval should produce many contour levels."""
+        from chuk_mcp_dem.core.raster_io import compute_contours
+
+        gradient = np.linspace(100, 200, 100).reshape(1, -1).repeat(5, axis=0).astype(np.float32)
+        _, levels = compute_contours(gradient, sample_transform, 10.0)
+        assert len(levels) >= 10
+
+
+class TestContoursToPng:
+    """Tests for contours_to_png() -- contour visualisation."""
+
+    def test_returns_png_bytes(self, sample_elevation, sample_transform):
+        """Output should be valid PNG bytes."""
+        from chuk_mcp_dem.core.raster_io import compute_contours, contours_to_png
+
+        contours, _ = compute_contours(sample_elevation, sample_transform, 50.0)
+        result = contours_to_png(sample_elevation, contours)
+        assert isinstance(result, bytes)
+        assert result[:4] == b"\x89PNG"
+
+    def test_output_dimensions(self, sample_elevation, sample_transform):
+        """PNG should match the input array dimensions."""
+        from chuk_mcp_dem.core.raster_io import compute_contours, contours_to_png
+
+        contours, _ = compute_contours(sample_elevation, sample_transform, 50.0)
+        result = contours_to_png(sample_elevation, contours)
+        img = Image.open(io.BytesIO(result))
+        h, w = sample_elevation.shape
+        assert img.size == (w, h)
+
+    def test_all_nan_contours(self, sample_elevation):
+        """All-NaN contours should still produce valid PNG."""
+        from chuk_mcp_dem.core.raster_io import contours_to_png
+
+        empty = np.full_like(sample_elevation, np.nan, dtype=np.float32)
+        result = contours_to_png(sample_elevation, empty)
+        assert isinstance(result, bytes)
+        assert result[:4] == b"\x89PNG"
+
+
+# ---------------------------------------------------------------------------
 # _reproject_bbox
 # ---------------------------------------------------------------------------
 
@@ -1857,3 +2214,109 @@ class TestCheckLineOfSight:
             cellsize_y_m=100.0,
         )
         assert result is True or result is False or isinstance(result, (bool, np.bool_))
+
+
+# ---------------------------------------------------------------------------
+# compute_flow_accumulation
+# ---------------------------------------------------------------------------
+
+
+class TestComputeFlowAccumulation:
+    """Tests for compute_flow_accumulation() -- D8 flow direction + accumulation."""
+
+    def test_flat_surface_uniform_accumulation(self, sample_transform):
+        """Flat surface: no clear flow direction, all cells ~1."""
+        from chuk_mcp_dem.core.raster_io import compute_flow_accumulation
+
+        flat = np.ones((20, 20), dtype=np.float32) * 100.0
+        accum = compute_flow_accumulation(flat, sample_transform)
+        assert accum.shape == (20, 20)
+        assert accum.dtype == np.float32
+        # All values >= 1 (every cell counts itself)
+        assert np.all(accum >= 1.0)
+
+    def test_simple_funnel(self, sample_transform):
+        """Bowl surface: centre should have highest accumulation."""
+        from chuk_mcp_dem.core.raster_io import compute_flow_accumulation
+
+        y, x = np.mgrid[0:30, 0:30]
+        bowl = ((x - 15.0) ** 2 + (y - 15.0) ** 2).astype(np.float32)
+        accum = compute_flow_accumulation(bowl, sample_transform)
+        # Centre should have highest accumulation
+        centre_val = accum[15, 15]
+        assert centre_val == float(np.max(accum))
+
+    def test_values_non_negative(self, sample_elevation, sample_transform):
+        """All accumulation values should be >= 1."""
+        from chuk_mcp_dem.core.raster_io import compute_flow_accumulation
+
+        accum = compute_flow_accumulation(sample_elevation, sample_transform)
+        assert np.all(accum >= 1.0)
+
+    def test_output_dtype_float32(self, sample_elevation, sample_transform):
+        from chuk_mcp_dem.core.raster_io import compute_flow_accumulation
+
+        accum = compute_flow_accumulation(sample_elevation, sample_transform)
+        assert accum.dtype == np.float32
+
+    def test_output_shape_matches_input(self, sample_elevation, sample_transform):
+        from chuk_mcp_dem.core.raster_io import compute_flow_accumulation
+
+        accum = compute_flow_accumulation(sample_elevation, sample_transform)
+        assert accum.shape == sample_elevation.shape
+
+    def test_nan_handling(self, sample_transform):
+        """NaN cells are treated as zero elevation."""
+        from chuk_mcp_dem.core.raster_io import compute_flow_accumulation
+
+        elev = np.ones((20, 20), dtype=np.float32) * 100.0
+        elev[5:10, 5:10] = np.nan
+        accum = compute_flow_accumulation(elev, sample_transform)
+        assert accum.shape == (20, 20)
+        assert np.all(accum >= 1.0)
+
+    def test_ramp_accumulation_increases_downslope(self, sample_transform):
+        """N-S ramp: accumulation should increase toward the low end."""
+        from chuk_mcp_dem.core.raster_io import compute_flow_accumulation
+
+        # North (row 0) high, south (row -1) low
+        ramp = np.tile(np.arange(30, 0, -1, dtype=np.float32).reshape(30, 1), (1, 30))
+        accum = compute_flow_accumulation(ramp, sample_transform)
+        # Bottom row (low elevation) should have higher mean accumulation
+        # than top row (high elevation)
+        assert np.mean(accum[-1, :]) > np.mean(accum[0, :])
+
+
+# ---------------------------------------------------------------------------
+# watershed_to_png
+# ---------------------------------------------------------------------------
+
+
+class TestWatershedToPng:
+    """Tests for watershed_to_png() -- log-scaled blue colour ramp."""
+
+    def test_returns_bytes(self, sample_elevation, sample_transform):
+        from chuk_mcp_dem.core.raster_io import compute_flow_accumulation, watershed_to_png
+
+        accum = compute_flow_accumulation(sample_elevation, sample_transform)
+        png_bytes = watershed_to_png(accum)
+        assert isinstance(png_bytes, bytes)
+        assert len(png_bytes) > 0
+
+    def test_valid_png(self, sample_elevation, sample_transform):
+        from chuk_mcp_dem.core.raster_io import compute_flow_accumulation, watershed_to_png
+
+        accum = compute_flow_accumulation(sample_elevation, sample_transform)
+        png_bytes = watershed_to_png(accum)
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.mode == "RGB"
+        assert img.size == (sample_elevation.shape[1], sample_elevation.shape[0])
+
+    def test_uniform_input(self):
+        from chuk_mcp_dem.core.raster_io import watershed_to_png
+
+        uniform = np.ones((50, 50), dtype=np.float32) * 10.0
+        png_bytes = watershed_to_png(uniform)
+        assert isinstance(png_bytes, bytes)
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.size == (50, 50)

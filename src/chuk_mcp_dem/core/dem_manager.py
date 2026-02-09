@@ -77,6 +77,21 @@ class TerrainResult:
 
 
 @dataclass
+class ContourResult:
+    """Result of a contour line generation."""
+
+    artifact_ref: str
+    preview_ref: str | None
+    crs: str
+    resolution_m: float
+    shape: list[int]
+    interval_m: float
+    contour_count: int
+    elevation_range: list[float]
+    dtype: str
+
+
+@dataclass
 class ProfileResult:
     """Result of an elevation profile extraction."""
 
@@ -646,6 +661,301 @@ class DEMManager:
             dtype="float32",
         )
 
+    async def fetch_curvature(
+        self,
+        bbox: list[float],
+        source: str = DEFAULT_SOURCE,
+        output_format: str = "geotiff",
+    ) -> TerrainResult:
+        """Compute curvature for a bounding box."""
+        from . import raster_io
+
+        self._validate_bbox(bbox)
+        src = self._get_source(source)
+
+        tile_urls = self._get_tile_urls(source, bbox)
+        if not tile_urls:
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src["name"], bbox))
+
+        elevation, crs, transform = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, tile_urls, bbox
+        )
+
+        curvature = await asyncio.to_thread(raster_io.compute_curvature, elevation, transform)
+
+        val_min = float(np.nanmin(curvature))
+        val_max = float(np.nanmax(curvature))
+
+        if output_format == "png":
+            data_bytes = await asyncio.to_thread(raster_io.curvature_to_png, curvature)
+            suffix = ".png"
+        else:
+            data_bytes = await asyncio.to_thread(
+                raster_io.arrays_to_geotiff, curvature, crs, transform, "float32"
+            )
+            suffix = ".tif"
+
+        preview_ref = None
+        if output_format != "png":
+            try:
+                preview_bytes = await asyncio.to_thread(raster_io.curvature_to_png, curvature)
+                preview_ref = await self._store_raster(
+                    preview_bytes,
+                    {"type": "curvature_preview", "source": source, "format": "png"},
+                    suffix="_curvature.png",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate curvature preview: {e}")
+
+        artifact_ref = await self._store_raster(
+            data_bytes,
+            {
+                "schema_version": "1.0",
+                "type": "curvature",
+                "source": source,
+                "bbox": bbox,
+                "crs": str(crs),
+                "resolution_m": src["resolution_m"],
+                "shape": list(curvature.shape),
+            },
+            suffix=suffix,
+        )
+
+        return TerrainResult(
+            artifact_ref=artifact_ref,
+            preview_ref=preview_ref,
+            crs=str(crs),
+            resolution_m=src["resolution_m"],
+            shape=list(curvature.shape),
+            value_range=[val_min, val_max],
+            dtype="float32",
+        )
+
+    async def fetch_tri(
+        self,
+        bbox: list[float],
+        source: str = DEFAULT_SOURCE,
+        output_format: str = "geotiff",
+    ) -> TerrainResult:
+        """Compute Terrain Ruggedness Index for a bounding box."""
+        from . import raster_io
+
+        self._validate_bbox(bbox)
+        src = self._get_source(source)
+
+        tile_urls = self._get_tile_urls(source, bbox)
+        if not tile_urls:
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src["name"], bbox))
+
+        elevation, crs, transform = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, tile_urls, bbox
+        )
+
+        tri = await asyncio.to_thread(raster_io.compute_tri, elevation, transform)
+
+        val_min = float(np.nanmin(tri))
+        val_max = float(np.nanmax(tri))
+
+        if output_format == "png":
+            data_bytes = await asyncio.to_thread(raster_io.tri_to_png, tri)
+            suffix = ".png"
+        else:
+            data_bytes = await asyncio.to_thread(
+                raster_io.arrays_to_geotiff, tri, crs, transform, "float32"
+            )
+            suffix = ".tif"
+
+        preview_ref = None
+        if output_format != "png":
+            try:
+                preview_bytes = await asyncio.to_thread(raster_io.tri_to_png, tri)
+                preview_ref = await self._store_raster(
+                    preview_bytes,
+                    {"type": "tri_preview", "source": source, "format": "png"},
+                    suffix="_tri.png",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate TRI preview: {e}")
+
+        artifact_ref = await self._store_raster(
+            data_bytes,
+            {
+                "schema_version": "1.0",
+                "type": "tri",
+                "source": source,
+                "bbox": bbox,
+                "crs": str(crs),
+                "resolution_m": src["resolution_m"],
+                "shape": list(tri.shape),
+            },
+            suffix=suffix,
+        )
+
+        return TerrainResult(
+            artifact_ref=artifact_ref,
+            preview_ref=preview_ref,
+            crs=str(crs),
+            resolution_m=src["resolution_m"],
+            shape=list(tri.shape),
+            value_range=[val_min, val_max],
+            dtype="float32",
+        )
+
+    async def fetch_contours(
+        self,
+        bbox: list[float],
+        source: str = DEFAULT_SOURCE,
+        interval_m: float = 100.0,
+        output_format: str = "geotiff",
+    ) -> ContourResult:
+        """Generate contour lines for a bounding box."""
+        from . import raster_io
+
+        self._validate_bbox(bbox)
+        src = self._get_source(source)
+
+        tile_urls = self._get_tile_urls(source, bbox)
+        if not tile_urls:
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src["name"], bbox))
+
+        elevation, crs, transform = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, tile_urls, bbox
+        )
+
+        elevation = await asyncio.to_thread(raster_io.fill_voids, elevation)
+
+        contours, levels = await asyncio.to_thread(
+            raster_io.compute_contours, elevation, transform, interval_m
+        )
+
+        elev_min = float(np.nanmin(elevation))
+        elev_max = float(np.nanmax(elevation))
+
+        if output_format == "png":
+            data_bytes = await asyncio.to_thread(raster_io.contours_to_png, elevation, contours)
+            suffix = ".png"
+        else:
+            data_bytes = await asyncio.to_thread(
+                raster_io.arrays_to_geotiff, contours, crs, transform, "float32"
+            )
+            suffix = ".tif"
+
+        preview_ref = None
+        if output_format != "png":
+            try:
+                preview_bytes = await asyncio.to_thread(
+                    raster_io.contours_to_png, elevation, contours
+                )
+                preview_ref = await self._store_raster(
+                    preview_bytes,
+                    {"type": "contour_preview", "source": source, "format": "png"},
+                    suffix="_contour.png",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate contour preview: {e}")
+
+        artifact_ref = await self._store_raster(
+            data_bytes,
+            {
+                "schema_version": "1.0",
+                "type": "contour",
+                "source": source,
+                "bbox": bbox,
+                "crs": str(crs),
+                "resolution_m": src["resolution_m"],
+                "shape": list(contours.shape),
+                "interval_m": interval_m,
+                "contour_count": len(levels),
+            },
+            suffix=suffix,
+        )
+
+        return ContourResult(
+            artifact_ref=artifact_ref,
+            preview_ref=preview_ref,
+            crs=str(crs),
+            resolution_m=src["resolution_m"],
+            shape=list(contours.shape),
+            interval_m=interval_m,
+            contour_count=len(levels),
+            elevation_range=[elev_min, elev_max],
+            dtype="float32",
+        )
+
+    async def fetch_watershed(
+        self,
+        bbox: list[float],
+        source: str = DEFAULT_SOURCE,
+        output_format: str = "geotiff",
+    ) -> TerrainResult:
+        """Compute flow accumulation (watershed) for a bounding box."""
+        from . import raster_io
+
+        self._validate_bbox(bbox)
+        src = self._get_source(source)
+
+        tile_urls = self._get_tile_urls(source, bbox)
+        if not tile_urls:
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src["name"], bbox))
+
+        elevation, crs, transform = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, tile_urls, bbox
+        )
+
+        elevation = await asyncio.to_thread(raster_io.fill_voids, elevation)
+
+        accumulation = await asyncio.to_thread(
+            raster_io.compute_flow_accumulation, elevation, transform
+        )
+
+        val_min = float(np.nanmin(accumulation))
+        val_max = float(np.nanmax(accumulation))
+
+        if output_format == "png":
+            data_bytes = await asyncio.to_thread(raster_io.watershed_to_png, accumulation)
+            suffix = ".png"
+        else:
+            data_bytes = await asyncio.to_thread(
+                raster_io.arrays_to_geotiff, accumulation, crs, transform, "float32"
+            )
+            suffix = ".tif"
+
+        preview_ref = None
+        if output_format != "png":
+            try:
+                preview_bytes = await asyncio.to_thread(raster_io.watershed_to_png, accumulation)
+                preview_ref = await self._store_raster(
+                    preview_bytes,
+                    {"type": "watershed_preview", "source": source, "format": "png"},
+                    suffix="_watershed.png",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate watershed preview: {e}")
+
+        artifact_ref = await self._store_raster(
+            data_bytes,
+            {
+                "schema_version": "1.0",
+                "type": "watershed",
+                "source": source,
+                "bbox": bbox,
+                "crs": str(crs),
+                "resolution_m": src["resolution_m"],
+                "shape": list(accumulation.shape),
+            },
+            suffix=suffix,
+        )
+
+        return TerrainResult(
+            artifact_ref=artifact_ref,
+            preview_ref=preview_ref,
+            crs=str(crs),
+            resolution_m=src["resolution_m"],
+            shape=list(accumulation.shape),
+            value_range=[val_min, val_max],
+            dtype="float32",
+        )
+
     # ------------------------------------------------------------------
     # Profile & viewshed (async)
     # ------------------------------------------------------------------
@@ -944,6 +1254,30 @@ class DEMManager:
         elif source == "cop90":
             tile_name = f"Copernicus_DSM_COG_30_{ns}{abs_lat:02d}_00_{ew}{abs_lon:03d}_00_DEM"
             return f"https://copernicus-dem-90m.s3.amazonaws.com/{tile_name}/{tile_name}.tif"
+        elif source == "srtm":
+            tile_id = f"{ns}{abs_lat:02d}{ew}{abs_lon:03d}"
+            return (
+                f"https://elevation-tiles-prod.s3.amazonaws.com"
+                f"/skadi/{ns}{abs_lat:02d}/{tile_id}.hgt.gz"
+            )
+        elif source == "3dep":
+            n_s = "n" if lat >= 0 else "s"
+            e_w = "e" if lon >= 0 else "w"
+            tile_id = f"{n_s}{abs_lat:02d}{e_w}{abs_lon:03d}"
+            return (
+                f"https://prd-tnm.s3.amazonaws.com"
+                f"/StagedProducts/Elevation/13/TIFF/current"
+                f"/{tile_id}/USGS_13_{tile_id}.tif"
+            )
+        elif source == "fabdem":
+            tile_id = f"{ns}{abs_lat:02d}{ew}{abs_lon:03d}"
+            return (
+                f"https://data.bris.ac.uk/data/dataset"
+                f"/s5hqmjcdj8yo2ibzi9b4ew3sn"
+                f"/{tile_id}_FABDEM_V1-2.tif"
+            )
+        elif source == "aster":
+            return None  # Requires NASA Earthdata auth
         else:
             return None
 

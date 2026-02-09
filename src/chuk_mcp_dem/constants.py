@@ -202,10 +202,13 @@ DEFAULT_FLAT_VALUE = -1.0
 DEFAULT_WINDOW_SIZE = 3
 
 # Terrain derivatives (available analysis types)
-TERRAIN_DERIVATIVES = ["hillshade", "slope", "aspect", "curvature", "tri"]
+TERRAIN_DERIVATIVES = ["hillshade", "slope", "aspect", "curvature", "tri", "contour", "watershed"]
 ANALYSIS_TOOLS = ["profile", "viewshed"]
 OUTPUT_FORMATS = ["geotiff", "png"]
 SLOPE_UNITS = ["degrees", "percent"]
+
+# Contour defaults
+DEFAULT_CONTOUR_INTERVAL_M = 100.0
 
 # Profile & viewshed defaults
 DEFAULT_NUM_POINTS = 100
@@ -223,6 +226,19 @@ RETRY_WAIT_MAX = 10
 MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 SIZE_WARNING_BYTES = 500 * 1024 * 1024  # 500 MB
 SIZE_LARGE_BYTES = 1024 * 1024 * 1024  # 1 GB
+
+
+FABDEM_LICENSE_WARNING = (
+    "FABDEM is licensed under CC-BY-NC-SA-4.0 (non-commercial). "
+    "Commercial use requires permission from the University of Bristol."
+)
+
+
+def get_license_warning(source: str) -> str | None:
+    """Return a license warning string if the source has restrictions, else None."""
+    if source == DEMSource.FABDEM:
+        return FABDEM_LICENSE_WARNING
+    return None
 
 
 class ErrorMessages:
@@ -243,6 +259,8 @@ class ErrorMessages:
     INVALID_NUM_POINTS = "num_points must be >= 2, got {}"
     INVALID_RADIUS = "radius_m must be > 0, got {}"
     RADIUS_TOO_LARGE = "radius_m ({:.0f}) exceeds maximum ({:.0f})"
+    INVALID_CONTOUR_INTERVAL = "interval_m must be > 0, got {}"
+    SOURCE_NOT_DOWNLOADABLE = "{} does not support direct download (authentication required)"
 
 
 class SuccessMessages:
@@ -258,5 +276,9 @@ class SuccessMessages:
     HILLSHADE_COMPLETE = "Hillshade computed ({} shape, azimuth {:.0f}, altitude {:.0f})"
     SLOPE_COMPLETE = "Slope computed ({} shape, units: {})"
     ASPECT_COMPLETE = "Aspect computed ({} shape, flat value: {})"
+    CURVATURE_COMPLETE = "Curvature computed ({} shape)"
+    TRI_COMPLETE = "Terrain Ruggedness Index computed ({} shape)"
+    CONTOUR_COMPLETE = "Contours generated ({} shape, interval {}m, {} contour levels)"
     PROFILE_COMPLETE = "Profile extracted: {} points over {:.1f}m"
     VIEWSHED_COMPLETE = "Viewshed computed: {:.1f}% visible within {:.0f}m radius"
+    WATERSHED_COMPLETE = "Watershed computed ({} shape, max accumulation {:.0f} cells)"

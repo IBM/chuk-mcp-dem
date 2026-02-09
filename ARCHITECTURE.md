@@ -37,7 +37,7 @@ at server startup, not at module import time.
 
 ### 6. Test Coverage >90% per File, 95%+ Overall
 
-813 tests across 8 test files. Overall project coverage is 95.43%.
+932 tests across 8 test files. Overall project coverage is 95%.
 Every source module maintains at least 78% line coverage (async_server.py,
 which has a short `if __name__` block), with most modules at 95-100%.
 Tests mock at the `DEMManager` level for tool tests, and at the rasterio
@@ -59,7 +59,7 @@ server.py                         # CLI entry point (sync)
   +-- async_server.py             # Async server setup, tool registration
        +-- tools/discovery/api.py       # list_sources, describe_source, status, capabilities
        +-- tools/download/api.py        # fetch, fetch_point, fetch_points, check_coverage, estimate_size
-       +-- tools/analysis/api.py        # hillshade, slope, aspect, profile, viewshed
+       +-- tools/analysis/api.py        # hillshade, slope, aspect, curvature, TRI, contour, profile, viewshed
        +-- core/dem_manager.py          # Cache, download pipeline, terrain, artifact storage
             +-- core/raster_io.py       # COG reading, merging, sampling, terrain, profile, viewshed, PNG
 
@@ -87,9 +87,9 @@ shared `DEMManager`.
 
 The central orchestrator. Manages:
 - **Tile cache**: LRU dict with byte-size tracking (100 MB total, 10 MB per item)
-- **Tile URL construction**: Source-specific URL builders for Copernicus S3 COGs
+- **Tile URL construction**: Source-specific URL builders for Copernicus, SRTM, 3DEP, and FABDEM
 - **Download pipeline**: `fetch_elevation()`, `fetch_point()`, `fetch_points()`
-- **Terrain analysis**: `fetch_hillshade()`, `fetch_slope()`, `fetch_aspect()`
+- **Terrain analysis**: `fetch_hillshade()`, `fetch_slope()`, `fetch_aspect()`, `fetch_curvature()`, `fetch_tri()`, `fetch_contours()`
 - **Profile extraction**: `fetch_profile()` with haversine distances and gain/loss
 - **Viewshed analysis**: `fetch_viewshed()` with DDA ray-casting visibility
 - **Void filling**: Nearest-neighbour interpolation for NaN pixels
@@ -97,7 +97,7 @@ The central orchestrator. Manages:
 - **Coverage checking**: `check_coverage()` and `estimate_size()` without I/O
 - **Discovery**: `list_sources()` and `describe_source()` from constant metadata
 
-Result dataclasses: `ElevationResult`, `TerrainResult`, `ProfileResult`, `ViewshedResult`.
+Result dataclasses: `ElevationResult`, `TerrainResult`, `ContourResult`, `ProfileResult`, `ViewshedResult`.
 
 ### `core/raster_io.py`
 
@@ -110,6 +110,9 @@ Pure I/O layer -- all functions are synchronous (called via `to_thread()`):
 - `compute_hillshade()`: Horn's method (1981) shaded relief
 - `compute_slope()`: Horn's method slope in degrees or percent
 - `compute_aspect()`: Slope direction with flat-area handling
+- `compute_curvature()`: Zevenbergen-Thorne second-order finite difference (profile curvature)
+- `compute_tri()`: Terrain Ruggedness Index (mean absolute diff from 8 neighbours)
+- `compute_contours()`: Contour line generation via sign-change detection
 - `compute_profile_points()`: Line sampling between two points with haversine distances
 - `compute_viewshed()`: DDA ray-casting visibility analysis from observer point
 - `arrays_to_geotiff()`: NumPy array to GeoTIFF bytes via MemoryFile
@@ -117,6 +120,9 @@ Pure I/O layer -- all functions are synchronous (called via `to_thread()`):
 - `elevation_to_terrain_png()`: Terrain-coloured PNG with green-brown-white ramp
 - `slope_to_png()`: Green-yellow-red ramp for slope visualisation
 - `aspect_to_png()`: HSV colour wheel for aspect visualisation
+- `curvature_to_png()`: Diverging blue-white-red ramp for curvature visualisation
+- `tri_to_png()`: Green-yellow-red ramp for TRI visualisation
+- `contours_to_png()`: Terrain background with contour line overlay
 
 ### `models/responses.py`
 
@@ -124,8 +130,8 @@ Pydantic v2 response models for every tool. All use `extra="forbid"` to catch
 serialisation errors early. Includes `SourcesResponse`, `FetchResponse`,
 `PointElevationResponse`, `MultiPointResponse`, `CoverageCheckResponse`,
 `SizeEstimateResponse`, `StatusResponse`, `CapabilitiesResponse`,
-`HillshadeResponse`, `SlopeResponse`, `AspectResponse`, `ProfilePointInfo`,
-`ProfileResponse`, `ViewshedResponse`.
+`HillshadeResponse`, `SlopeResponse`, `AspectResponse`, `CurvatureResponse`,
+`TRIResponse`, `ContourResponse`, `ProfilePointInfo`, `ProfileResponse`, `ViewshedResponse`.
 
 Every response model implements `to_text()` for human-readable output mode.
 
@@ -194,7 +200,7 @@ All magic strings, source metadata, and configuration values. Includes:
        +-- pixel/size estimation                 <-- arithmetic only
 ```
 
-### Terrain Analysis (hillshade, slope, aspect)
+### Terrain Analysis (hillshade, slope, aspect, curvature, TRI)
 
 ```
 5. dem_hillshade(bbox, source, azimuth, altitude, z_factor, ...)
@@ -209,9 +215,10 @@ All magic strings, source metadata, and configuration values. Includes:
        +-- _store_raster()                             <-- artifact storage
 ```
 
-Slope and aspect follow the same pattern, substituting `compute_slope()` or
-`compute_aspect()` and their respective PNG renderers (`slope_to_png()`,
-`aspect_to_png()`).
+Slope, aspect, curvature, TRI, and contour follow the same pattern, substituting
+`compute_slope()`, `compute_aspect()`, `compute_curvature()`, `compute_tri()`,
+or `compute_contours()` and their respective PNG renderers (`slope_to_png()`,
+`aspect_to_png()`, `curvature_to_png()`, `tri_to_png()`, `contours_to_png()`).
 
 ### Elevation Profile
 
@@ -248,17 +255,27 @@ Slope and aspect follow the same pattern, substituting `compute_slope()` or
 
 ### Tile URL Construction
 
-Copernicus DEM tiles follow a deterministic naming convention based on latitude
-and longitude. The `_make_tile_url()` method constructs S3 COG URLs:
+DEM tiles follow deterministic naming conventions based on latitude and longitude.
+The `_make_tile_url()` method constructs source-specific URLs:
 
 ```
-cop30: https://copernicus-dem-30m.s3.amazonaws.com/
-       Copernicus_DSM_COG_10_{NS}{LAT}_00_{EW}{LON}_00_DEM/
-       Copernicus_DSM_COG_10_{NS}{LAT}_00_{EW}{LON}_00_DEM.tif
+cop30:  https://copernicus-dem-30m.s3.amazonaws.com/
+        Copernicus_DSM_COG_10_{NS}{LAT}_00_{EW}{LON}_00_DEM/...tif
 
-cop90: https://copernicus-dem-90m.s3.amazonaws.com/
-       Copernicus_DSM_COG_30_{NS}{LAT}_00_{EW}{LON}_00_DEM/
-       Copernicus_DSM_COG_30_{NS}{LAT}_00_{EW}{LON}_00_DEM.tif
+cop90:  https://copernicus-dem-90m.s3.amazonaws.com/
+        Copernicus_DSM_COG_30_{NS}{LAT}_00_{EW}{LON}_00_DEM/...tif
+
+srtm:   https://elevation-tiles-prod.s3.amazonaws.com/
+        skadi/{NS}{LAT}/{NS}{LAT}{EW}{LON}.hgt.gz
+
+3dep:   https://prd-tnm.s3.amazonaws.com/
+        StagedProducts/Elevation/13/TIFF/current/{tile}/USGS_13_{tile}.tif
+        (lowercase n/s/e/w for tile IDs)
+
+fabdem: https://data.bris.ac.uk/data/dataset/s5hqmjcdj8yo2ibzi9b4ew3sn/
+        {NS}{LAT}{EW}{LON}_FABDEM_V1-2.tif
+
+aster:  Not yet supported (requires NASA Earthdata authentication)
 ```
 
 Tiles are 1-degree squares. A bbox spanning multiple degrees fetches multiple

@@ -7,12 +7,12 @@ Version 0.1.0
 chuk-mcp-dem is an MCP (Model Context Protocol) server that provides digital
 elevation model (DEM) discovery, retrieval, and terrain analysis.
 
-- **14 planned tools** for discovering DEM sources, fetching elevation data, computing terrain derivatives, and generating profiles/viewsheds
+- **18 tools** for discovering DEM sources, fetching elevation data, computing terrain derivatives, and generating profiles/viewsheds
 - **Dual output mode** -- all tools return JSON (default) or human-readable text via `output_mode` parameter
 - **Async-first** -- tool entry points are async; sync rasterio I/O runs in thread pools
 - **Pluggable storage** -- raster data stored via chuk-artifacts (memory, filesystem, S3)
 
-Phase 1.0 implements 9 tools (discovery + download). Terrain analysis and advanced tools are planned for subsequent phases.
+All 17 tools are implemented: discovery (4), download (5), terrain analysis (6), and profile/viewshed (2).
 
 ---
 
@@ -289,7 +289,7 @@ Estimate download size for an area without fetching pixel data.
 
 ---
 
-### Terrain Analysis Tools (Phase 1.1)
+### Terrain Analysis Tools
 
 #### `dem_hillshade`
 
@@ -338,7 +338,106 @@ Compute aspect (slope direction) from elevation data.
 
 ---
 
-### Profile & Viewshed Tools (Phase 1.2)
+#### `dem_curvature`
+
+Compute surface curvature (profile curvature) from elevation data. Positive values
+indicate convex surfaces (ridges), negative values indicate concave surfaces (valleys),
+and near-zero values indicate planar surfaces. Uses Zevenbergen-Thorne (1987)
+second-order finite difference method.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `bbox` | `float[4]` | *required* | Bounding box `[west, south, east, north]` |
+| `source` | `str?` | `cop30` | DEM source identifier |
+| `output_format` | `str` | `geotiff` | Output format |
+
+**Response:** `CurvatureResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | `str` | DEM source used |
+| `bbox` | `float[]` | Bounding box |
+| `artifact_ref` | `str` | Artifact store reference |
+| `preview_ref` | `str?` | PNG preview reference |
+| `crs` | `str` | Output CRS |
+| `resolution_m` | `float` | Resolution in metres |
+| `shape` | `int[]` | Array shape [height, width] |
+| `value_range` | `float[]` | [min, max] curvature in 1/m |
+| `output_format` | `str` | Output format used |
+| `message` | `str` | Result message |
+
+---
+
+#### `dem_terrain_ruggedness`
+
+Compute Terrain Ruggedness Index (TRI) from elevation data. TRI measures the mean
+absolute elevation difference between a cell and its 8 neighbours (Riley et al. 1999).
+Values are in metres.
+
+Classification: 0-80m level, 81-116m nearly level, 117-161m slightly rugged,
+162-239m intermediately rugged, 240-497m moderately rugged, 498-958m highly rugged,
+959+m extremely rugged.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `bbox` | `float[4]` | *required* | Bounding box `[west, south, east, north]` |
+| `source` | `str?` | `cop30` | DEM source identifier |
+| `output_format` | `str` | `geotiff` | Output format |
+
+**Response:** `TRIResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | `str` | DEM source used |
+| `bbox` | `float[]` | Bounding box |
+| `artifact_ref` | `str` | Artifact store reference |
+| `preview_ref` | `str?` | PNG preview reference |
+| `crs` | `str` | Output CRS |
+| `resolution_m` | `float` | Resolution in metres |
+| `shape` | `int[]` | Array shape [height, width] |
+| `value_range` | `float[]` | [min, max] TRI in metres |
+| `output_format` | `str` | Output format used |
+| `message` | `str` | Result message |
+
+---
+
+#### `dem_contour`
+
+Generate contour lines from elevation data at a specified interval.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `bbox` | `float[4]` | *required* | Bounding box `[west, south, east, north]` |
+| `source` | `str?` | `cop30` | DEM source identifier |
+| `interval_m` | `float` | `100.0` | Contour interval in metres |
+| `output_format` | `str` | `geotiff` | Output format |
+
+**Response:** `ContourResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | `str` | DEM source used |
+| `bbox` | `float[]` | Bounding box |
+| `artifact_ref` | `str` | Artifact store reference |
+| `preview_ref` | `str?` | PNG preview reference |
+| `crs` | `str` | Output CRS |
+| `resolution_m` | `float` | Resolution in metres |
+| `shape` | `int[]` | Array shape [height, width] |
+| `interval_m` | `float` | Contour interval used (metres) |
+| `contour_count` | `int` | Number of contour levels generated |
+| `elevation_range` | `float[]` | [min, max] elevation in metres |
+| `output_format` | `str` | Output format used |
+| `message` | `str` | Result message |
+
+---
+
+### Profile & Viewshed Tools
 
 #### `dem_profile`
 
@@ -377,9 +476,9 @@ Compute visible area from an observer point.
 | Phase | Version | Tools | Focus |
 |-------|---------|-------|-------|
 | **1.0** | v0.1.0 | 9 tools | Core Fetch: scaffold, discovery (4), download (5), tests, CI/CD |
-| **1.1** | v0.2.0 | +3 tools | Terrain Analysis: hillshade, slope, aspect |
-| **1.2** | v0.3.0 | +2 tools | Advanced: profile, viewshed, contour |
-| **2.0** | v0.4.0 | -- | Extended Sources: SRTM download, 3DEP download, FABDEM download |
+| **1.1** | v0.2.0 | +5 tools | Terrain Analysis: hillshade, slope, aspect, curvature, TRI |
+| **1.2** | v0.3.0 | +2 tools | Advanced: profile, viewshed |
+| **1.2+2.0** | v0.4.0 | +1 tool | Contour lines + SRTM/3DEP/FABDEM download integration |
 
 ---
 

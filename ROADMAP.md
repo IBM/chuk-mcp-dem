@@ -1,14 +1,14 @@
 # chuk-mcp-dem Roadmap
 
-## Current State (v0.3.0)
+## Current State (v0.5.0)
 
-**Working:** 14 tools functional with full DEM discovery, coverage check, fetch, point query, terrain analysis, profile, and viewshed pipeline.
+**Working:** 18 tools functional with full DEM discovery, coverage check, fetch, point query, terrain analysis (hillshade/slope/aspect/curvature/TRI/contour/watershed), profile, and viewshed pipeline.
 
-**Test Stats:** 813 tests, 95.43% coverage. All checks pass (ruff, mypy, bandit, pytest).
+**Test Stats:** 993 tests, 95% coverage. All checks pass (ruff, mypy, bandit, pytest).
 
 **Infrastructure:** Project scaffold, pyproject.toml, Makefile, CI/CD (GitHub Actions), Dockerfile.
 
-**Implemented:** 6 DEM sources (Copernicus GLO-30/90, SRTM, ASTER, 3DEP, FABDEM), tile URL construction, multi-tile merging, void filling, point sampling (nearest/bilinear/cubic), hillshade auto-preview, coverage checking, size estimation, LRU tile cache (100 MB), artifact storage via chuk-artifacts, Pydantic v2 response models, dual output mode, terrain derivatives (hillshade/slope/aspect), elevation profiles, viewshed analysis.
+**Implemented:** 6 DEM sources (Copernicus GLO-30/90, SRTM, ASTER, 3DEP, FABDEM), tile URL construction for Copernicus/SRTM/3DEP/FABDEM, multi-tile merging, void filling, point sampling (nearest/bilinear/cubic), hillshade auto-preview, coverage checking, size estimation, LRU tile cache (100 MB), artifact storage via chuk-artifacts, Pydantic v2 response models, dual output mode, terrain derivatives (hillshade/slope/aspect/curvature/TRI/contour/watershed), elevation profiles, viewshed analysis, FABDEM license warnings.
 
 ---
 
@@ -49,7 +49,7 @@
 
 ### 1.0.5 Tests & Documentation
 
-- [x] 813 tests with 95.43% overall coverage
+- [x] 993 tests with 95% overall coverage
 - [x] `SPEC.md` -- full tool specification
 - [x] `ARCHITECTURE.md` -- design principles and data flows
 - [x] `ROADMAP.md` -- this document
@@ -59,22 +59,24 @@
 
 ## Phase 1.1: Terrain Analysis (v0.2.0) -- COMPLETE
 
-### 1.1.1 Terrain Derivative Tools (3 tools)
+### 1.1.1 Terrain Derivative Tools (5 tools)
 
 - [x] `dem_hillshade` -- shaded relief via Horn's method (azimuth, altitude, z-factor)
 - [x] `dem_slope` -- slope steepness in degrees or percent
 - [x] `dem_aspect` -- slope direction with flat-area handling
+- [x] `dem_curvature` -- surface curvature via Zevenbergen-Thorne (ridges/valleys)
+- [x] `dem_terrain_ruggedness` -- Terrain Ruggedness Index (Riley et al. 1999)
 
 ### 1.1.2 Terrain Infrastructure
 
-- [x] Terrain tool response models (`HillshadeResponse`, `SlopeResponse`, `AspectResponse`)
-- [x] Terrain-coloured PNG output for slope/aspect visualisation
-- [x] DEMManager `fetch_hillshade()`, `fetch_slope()`, `fetch_aspect()` async methods
+- [x] Terrain tool response models (`HillshadeResponse`, `SlopeResponse`, `AspectResponse`, `CurvatureResponse`, `TRIResponse`)
+- [x] Terrain-coloured PNG output for slope/aspect/curvature/TRI visualisation
+- [x] DEMManager `fetch_hillshade()`, `fetch_slope()`, `fetch_aspect()`, `fetch_curvature()`, `fetch_tri()` async methods
 
 ### 1.1.3 Tests
 
-- [x] Unit tests for `compute_hillshade()`, `compute_slope()`, `compute_aspect()`
-- [x] Unit tests for `slope_to_png()`, `aspect_to_png()`
+- [x] Unit tests for `compute_hillshade()`, `compute_slope()`, `compute_aspect()`, `compute_curvature()`, `compute_tri()`
+- [x] Unit tests for `slope_to_png()`, `aspect_to_png()`, `curvature_to_png()`, `tri_to_png()`
 - [x] Integration tests for terrain tool endpoints
 - [x] Edge cases: flat terrain, steep cliffs, nodata handling
 
@@ -86,7 +88,7 @@
 
 - [x] `dem_profile` -- elevation profile along a line between two points
 - [x] `dem_viewshed` -- visibility analysis from an observer point
-- [ ] `dem_contour` -- generate contour lines at specified intervals (stretch goal)
+- [x] `dem_contour` -- generate contour lines at specified intervals
 
 ### 1.2.2 Profile Infrastructure
 
@@ -104,25 +106,53 @@
 
 ---
 
-## Phase 2.0: Extended Sources (v0.4.0)
+## Phase 2.0: Extended Sources (v0.4.0) -- COMPLETE
 
 ### 2.0.1 SRTM Download Integration
 
-- [ ] SRTM v3 tile URL construction and download
-- [ ] SRTM HGT file reading via rasterio
-- [ ] Automatic void detection and reporting
+- [x] SRTM v3 tile URL construction and download (AWS Open Data skadi format)
+- [x] SRTM HGT file reading via rasterio
+- [x] Automatic void detection and reporting
 
 ### 2.0.2 3DEP Download Integration
 
-- [ ] 3DEP tile URL construction (USGS TNM API)
-- [ ] Multi-resolution support (1m, 3m, 10m, 30m)
-- [ ] US-only coverage validation
+- [x] 3DEP tile URL construction (USGS S3 1/3 arc-second)
+- [ ] Multi-resolution support (1m, 3m, 10m, 30m) -- future enhancement
+- [x] US-only coverage validation
 
 ### 2.0.3 FABDEM Download Integration
 
-- [ ] FABDEM tile access
-- [ ] Bare-earth vs DSM comparison capability
-- [ ] Non-commercial license enforcement/warning
+- [x] FABDEM tile access (Bristol University public endpoint)
+- [ ] Bare-earth vs DSM comparison capability -- future enhancement
+- [x] Non-commercial license warning on all FABDEM responses
+
+### 2.0.4 ASTER
+
+- [ ] ASTER GDEM v3 download -- requires NASA Earthdata authentication (deferred)
+
+---
+
+## Phase 2.1: Watershed & License (v0.5.0) -- COMPLETE
+
+### 2.1.1 Watershed Analysis (1 tool)
+
+- [x] `dem_watershed` -- D8 flow direction and flow accumulation
+- [x] `compute_flow_accumulation()` -- D8 single-flow-direction with topological sort
+- [x] `watershed_to_png()` -- log-scaled blue ramp for stream network visualisation
+- [x] `WatershedResponse` Pydantic v2 response model
+- [x] `DEMManager.fetch_watershed()` async method
+
+### 2.1.2 FABDEM License Warning
+
+- [x] `FABDEM_LICENSE_WARNING` constant and `get_license_warning()` helper
+- [x] `license_warning` field on all response models that accept a `source` parameter
+- [x] Automatic warning in both JSON and text output modes for FABDEM source
+
+### 2.1.3 Tests
+
+- [x] Unit tests for `compute_flow_accumulation()`, `watershed_to_png()`
+- [x] Integration tests for `dem_watershed` tool endpoint
+- [x] License warning tests across all terrain and download tools
 
 ---
 
@@ -133,7 +163,6 @@
 - **Bathymetry**: GEBCO ocean depth data as an additional source
 - **Planetary DEMs**: Mars MOLA, Moon LOLA via PDS archives
 - **Difference maps**: Compute elevation change between two DEM sources/dates
-- **Watershed delineation**: Flow direction and accumulation from elevation
 - **Cross-section export**: Export profiles as CSV/GeoJSON for external tools
 
 ### Not in Scope (for now)
@@ -150,9 +179,10 @@
 | Version | Phase | Focus | Key Deliverables |
 |---------|-------|-------|------------------|
 | 0.1.0 | 1.0 | Core Fetch | 9 tools, 6 sources, 596 tests (97% coverage), tile cache, auto-preview, CI/CD |
-| 0.2.0 | 1.1 | Terrain Analysis | +3 tools (hillshade, slope, aspect), terrain PNG output |
-| 0.3.0 | 1.2 | Advanced | +2 tools (profile, viewshed), haversine distance, DDA ray-casting, 813 tests (95% coverage) |
-| 0.4.0 | 2.0 | Extended Sources | SRTM/3DEP/FABDEM download integration |
+| 0.2.0 | 1.1 | Terrain Analysis | +5 tools (hillshade, slope, aspect, curvature, TRI), terrain PNG output |
+| 0.3.0 | 1.2 | Advanced | +2 tools (profile, viewshed), haversine distance, DDA ray-casting, 883 tests (95% coverage) |
+| 0.4.0 | 1.2+2.0 | Contour + Sources | +1 tool (contour), SRTM/3DEP/FABDEM download integration, 932 tests (95% coverage) |
+| 0.5.0 | 2.1 | Watershed + License | +1 tool (watershed), FABDEM license warnings, 993 tests (95% coverage) |
 
 ---
 

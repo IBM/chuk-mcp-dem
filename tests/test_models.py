@@ -17,6 +17,8 @@ from chuk_mcp_dem.models.responses import (
     AspectResponse,
     CapabilitiesResponse,
     CoverageCheckResponse,
+    ContourResponse,
+    CurvatureResponse,
     ErrorResponse,
     FetchResponse,
     HillshadeResponse,
@@ -31,7 +33,9 @@ from chuk_mcp_dem.models.responses import (
     SourceInfo,
     SourcesResponse,
     StatusResponse,
+    TRIResponse,
     ViewshedResponse,
+    WatershedResponse,
     format_response,
 )
 
@@ -832,6 +836,257 @@ class TestAspectResponse:
 
 
 # ===========================================================================
+# CurvatureResponse
+# ===========================================================================
+
+
+class TestCurvatureResponse:
+    def _make(self, **overrides):
+        defaults = dict(
+            source="cop30",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/curvature_abc.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            value_range=[-0.01, 0.01],
+            output_format="geotiff",
+            message="Curvature computed",
+        )
+        defaults.update(overrides)
+        return CurvatureResponse(**defaults)
+
+    def test_creation(self):
+        resp = self._make()
+        assert resp.source == "cop30"
+        assert resp.resolution_m == 30.0
+        assert resp.preview_ref is None
+
+    def test_to_text_returns_string(self):
+        text = self._make().to_text()
+        assert isinstance(text, str)
+        assert "Curvature: cop30" in text
+        assert "dem/curvature_abc.tif" in text
+        assert "100x100" in text
+        assert "1/m" in text
+
+    def test_to_text_with_preview(self):
+        text = self._make(preview_ref="dem/curvature_preview.png").to_text()
+        assert "Preview: dem/curvature_preview.png" in text
+
+    def test_to_text_no_preview(self):
+        text = self._make(preview_ref=None).to_text()
+        assert "Preview" not in text
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(bogus=42)
+
+    def test_optional_preview_ref_none(self):
+        resp = self._make(preview_ref=None)
+        assert resp.preview_ref is None
+
+
+# ===========================================================================
+# TRIResponse
+# ===========================================================================
+
+
+class TestTRIResponse:
+    def _make(self, **overrides):
+        defaults = dict(
+            source="cop30",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/tri_abc.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            value_range=[0.0, 150.0],
+            output_format="geotiff",
+            message="TRI computed",
+        )
+        defaults.update(overrides)
+        return TRIResponse(**defaults)
+
+    def test_creation(self):
+        resp = self._make()
+        assert resp.source == "cop30"
+        assert resp.resolution_m == 30.0
+        assert resp.preview_ref is None
+
+    def test_to_text_returns_string(self):
+        text = self._make().to_text()
+        assert isinstance(text, str)
+        assert "Terrain Ruggedness: cop30" in text
+        assert "dem/tri_abc.tif" in text
+        assert "100x100" in text
+
+    def test_to_text_with_preview(self):
+        text = self._make(preview_ref="dem/tri_preview.png").to_text()
+        assert "Preview: dem/tri_preview.png" in text
+
+    def test_to_text_no_preview(self):
+        text = self._make(preview_ref=None).to_text()
+        assert "Preview" not in text
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(bogus=42)
+
+    def test_optional_preview_ref_none(self):
+        resp = self._make(preview_ref=None)
+        assert resp.preview_ref is None
+
+    def test_value_range_in_text(self):
+        text = self._make(value_range=[0.0, 250.0]).to_text()
+        assert "0.0m" in text
+        assert "250.0m" in text
+
+
+# ===========================================================================
+# ContourResponse
+# ===========================================================================
+
+
+class TestContourResponse:
+    def test_creation(self):
+        r = ContourResponse(
+            source="cop30",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/contour123.tif",
+            preview_ref="dem/contour123.png",
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            interval_m=100.0,
+            contour_count=5,
+            elevation_range=[200.0, 700.0],
+            output_format="geotiff",
+            message="Contours generated",
+        )
+        assert r.source == "cop30"
+        assert r.interval_m == 100.0
+        assert r.contour_count == 5
+        assert r.elevation_range == [200.0, 700.0]
+
+    def test_extra_fields_forbidden(self):
+        with pytest.raises(ValidationError):
+            ContourResponse(
+                source="cop30",
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                artifact_ref="dem/contour123.tif",
+                preview_ref=None,
+                crs="EPSG:4326",
+                resolution_m=30.0,
+                shape=[100, 100],
+                interval_m=100.0,
+                contour_count=5,
+                elevation_range=[200.0, 700.0],
+                output_format="geotiff",
+                message="test",
+                extra_field="not allowed",
+            )
+
+    def test_to_text_contains_interval(self):
+        r = ContourResponse(
+            source="cop30",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/contour123.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            interval_m=50.0,
+            contour_count=8,
+            elevation_range=[100.0, 500.0],
+            output_format="geotiff",
+            message="test",
+        )
+        text = r.to_text()
+        assert "50.0m" in text
+        assert "8 levels" in text
+        assert "Contours:" in text
+
+    def test_to_text_contains_elevation_range(self):
+        r = ContourResponse(
+            source="cop30",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/contour123.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[50, 50],
+            interval_m=100.0,
+            contour_count=3,
+            elevation_range=[100.0, 400.0],
+            output_format="geotiff",
+            message="test",
+        )
+        text = r.to_text()
+        assert "100.0m" in text
+        assert "400.0m" in text
+
+    def test_to_text_with_preview(self):
+        r = ContourResponse(
+            source="cop30",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/contour123.tif",
+            preview_ref="dem/contour123_preview.png",
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[50, 50],
+            interval_m=100.0,
+            contour_count=3,
+            elevation_range=[100.0, 400.0],
+            output_format="geotiff",
+            message="test",
+        )
+        text = r.to_text()
+        assert "Preview:" in text
+        assert "contour123_preview.png" in text
+
+    def test_format_response_json(self):
+        r = ContourResponse(
+            source="cop30",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/contour123.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[50, 50],
+            interval_m=100.0,
+            contour_count=3,
+            elevation_range=[100.0, 400.0],
+            output_format="geotiff",
+            message="test",
+        )
+        json_str = format_response(r, "json")
+        parsed = json.loads(json_str)
+        assert parsed["interval_m"] == 100.0
+        assert parsed["contour_count"] == 3
+
+    def test_format_response_text(self):
+        r = ContourResponse(
+            source="cop30",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/contour123.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[50, 50],
+            interval_m=100.0,
+            contour_count=3,
+            elevation_range=[100.0, 400.0],
+            output_format="geotiff",
+            message="test",
+        )
+        text = format_response(r, "text")
+        assert "Contours:" in text
+
+
+# ===========================================================================
 # ProfilePointInfo
 # ===========================================================================
 
@@ -999,3 +1254,140 @@ class TestViewshedResponse:
     def test_visible_percentage_hundred(self):
         resp = self._make(visible_percentage=100.0)
         assert resp.visible_percentage == 100.0
+
+
+# ===========================================================================
+# WatershedResponse
+# ===========================================================================
+
+
+class TestWatershedResponse:
+    def _make(self, **overrides):
+        defaults = dict(
+            source="cop30",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/watershed_abc.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            value_range=[1.0, 5000.0],
+            output_format="geotiff",
+            message="Watershed computed",
+        )
+        defaults.update(overrides)
+        return WatershedResponse(**defaults)
+
+    def test_creation(self):
+        resp = self._make()
+        assert resp.source == "cop30"
+        assert resp.resolution_m == 30.0
+        assert resp.value_range == [1.0, 5000.0]
+        assert resp.preview_ref is None
+
+    def test_to_text_returns_string(self):
+        text = self._make().to_text()
+        assert isinstance(text, str)
+        assert "Watershed: cop30" in text
+        assert "dem/watershed_abc.tif" in text
+        assert "100x100" in text
+        assert "5000" in text
+
+    def test_to_text_with_preview(self):
+        text = self._make(preview_ref="dem/watershed_preview.png").to_text()
+        assert "Preview: dem/watershed_preview.png" in text
+
+    def test_to_text_no_preview(self):
+        text = self._make(preview_ref=None).to_text()
+        assert "Preview" not in text
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(bogus=42)
+
+    def test_license_warning_none_by_default(self):
+        resp = self._make()
+        assert resp.license_warning is None
+
+    def test_license_warning_in_text(self):
+        resp = self._make(license_warning="Non-commercial only")
+        text = resp.to_text()
+        assert "WARNING: Non-commercial only" in text
+
+    def test_license_warning_in_json(self):
+        resp = self._make(license_warning="CC-BY-NC-SA-4.0")
+        json_str = format_response(resp, "json")
+        parsed = json.loads(json_str)
+        assert parsed["license_warning"] == "CC-BY-NC-SA-4.0"
+
+
+# ===========================================================================
+# License warning field on existing models
+# ===========================================================================
+
+
+class TestLicenseWarningOnModels:
+    def test_fetch_response_license_warning(self):
+        resp = FetchResponse(
+            source="fabdem",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/abc.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30,
+            shape=[100, 100],
+            elevation_range=[0.0, 100.0],
+            dtype="float32",
+            nodata_pixels=0,
+            license_warning="Non-commercial",
+            message="OK",
+        )
+        assert resp.license_warning == "Non-commercial"
+        assert "WARNING: Non-commercial" in resp.to_text()
+
+    def test_fetch_response_no_warning(self):
+        resp = FetchResponse(
+            source="cop30",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/abc.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30,
+            shape=[100, 100],
+            elevation_range=[0.0, 100.0],
+            dtype="float32",
+            nodata_pixels=0,
+            message="OK",
+        )
+        assert resp.license_warning is None
+        assert "WARNING" not in resp.to_text()
+
+    def test_slope_response_license_warning(self):
+        resp = SlopeResponse(
+            source="fabdem",
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            artifact_ref="dem/abc.tif",
+            preview_ref=None,
+            units="degrees",
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            value_range=[0.0, 45.0],
+            output_format="geotiff",
+            license_warning="CC-BY-NC-SA-4.0",
+            message="OK",
+        )
+        assert "WARNING: CC-BY-NC-SA-4.0" in resp.to_text()
+
+    def test_point_elevation_response_license_warning(self):
+        resp = PointElevationResponse(
+            lon=7.5,
+            lat=46.5,
+            source="fabdem",
+            elevation_m=500.0,
+            interpolation="bilinear",
+            uncertainty_m=4.0,
+            license_warning="Non-commercial",
+            message="OK",
+        )
+        assert "WARNING: Non-commercial" in resp.to_text()
