@@ -6,7 +6,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Tests: 993 passed](https://img.shields.io/badge/tests-993%20passed-brightgreen.svg)]()
+[![Tests: 1006 passed](https://img.shields.io/badge/tests-1006%20passed-brightgreen.svg)]()
 [![Coverage: 95%](https://img.shields.io/badge/coverage-95%25-brightgreen.svg)]()
 
 ## Features
@@ -72,6 +72,7 @@ Get elevations at multiple coordinates in one call:
 - Batch processing with single tile merge
 - Returns per-point elevations and overall range
 - Configurable interpolation method
+- Automatic input normalization for LLM callers (handles string and flat-list formats)
 
 #### 8. Coverage Check (`dem_check_coverage`)
 Check if a DEM source covers a bounding box:
@@ -285,7 +286,7 @@ All tools accept an optional `output_mode` parameter (`"json"` default, or `"tex
 
 ```python
 {
-  "points": [                                 # array of [lon, lat] pairs
+  "points": [                                 # nested array of [lon, lat] numeric pairs
     [-121.7603, 46.8523],
     [-105.6836, 40.2548],
     [-112.1871, 36.0544]
@@ -364,7 +365,7 @@ pip install -e ".[dev]"
 ### Running Tests
 
 ```bash
-make test              # Run 993 tests
+make test              # Run 1006 tests
 make test-cov          # Run tests with coverage (95%)
 make coverage-report   # Show coverage report
 ```

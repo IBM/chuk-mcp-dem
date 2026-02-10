@@ -1,14 +1,14 @@
 # chuk-mcp-dem Roadmap
 
-## Current State (v0.5.0)
+## Current State (v0.5.1)
 
 **Working:** 18 tools functional with full DEM discovery, coverage check, fetch, point query, terrain analysis (hillshade/slope/aspect/curvature/TRI/contour/watershed), profile, and viewshed pipeline.
 
-**Test Stats:** 993 tests, 95% coverage. All checks pass (ruff, mypy, bandit, pytest).
+**Test Stats:** 1006 tests, 95% coverage. All checks pass (ruff, mypy, bandit, pytest).
 
 **Infrastructure:** Project scaffold, pyproject.toml, Makefile, CI/CD (GitHub Actions), Dockerfile.
 
-**Implemented:** 6 DEM sources (Copernicus GLO-30/90, SRTM, ASTER, 3DEP, FABDEM), tile URL construction for Copernicus/SRTM/3DEP/FABDEM, multi-tile merging, void filling, point sampling (nearest/bilinear/cubic), hillshade auto-preview, coverage checking, size estimation, LRU tile cache (100 MB), artifact storage via chuk-artifacts, Pydantic v2 response models, dual output mode, terrain derivatives (hillshade/slope/aspect/curvature/TRI/contour/watershed), elevation profiles, viewshed analysis, FABDEM license warnings.
+**Implemented:** 6 DEM sources (Copernicus GLO-30/90, SRTM, ASTER, 3DEP, FABDEM), tile URL construction for Copernicus/SRTM/3DEP/FABDEM, multi-tile merging, void filling, point sampling (nearest/bilinear/cubic), hillshade auto-preview, coverage checking, size estimation, LRU tile cache (100 MB), artifact storage via chuk-artifacts, Pydantic v2 response models, dual output mode, terrain derivatives (hillshade/slope/aspect/curvature/TRI/contour/watershed), elevation profiles, viewshed analysis, FABDEM license warnings, LLM input normalization for `dem_fetch_points`.
 
 ---
 
@@ -49,7 +49,7 @@
 
 ### 1.0.5 Tests & Documentation
 
-- [x] 993 tests with 95% overall coverage
+- [x] 1006 tests with 95% overall coverage
 - [x] `SPEC.md` -- full tool specification
 - [x] `ARCHITECTURE.md` -- design principles and data flows
 - [x] `ROADMAP.md` -- this document
@@ -156,6 +156,18 @@
 
 ---
 
+## Phase 2.2: LLM Robustness (v0.5.1) -- COMPLETE
+
+### 2.2.1 Input Normalization for `dem_fetch_points`
+
+- [x] `_normalize_points()` helper handles malformed LLM inputs (string elements, JSON string elements, flat numeric lists)
+- [x] Improved docstring with explicit JSON example for better schema inference by LLMs
+- [x] 13 new tests (10 unit + 3 integration) covering normalization edge cases
+
+**Context:** GPT-5.2 failed to call `dem_fetch_points` correctly, sending strings like `"9.28,45.62"` instead of nested arrays `[[9.28, 45.62]]`. The type annotation was correct (`list[list[float]]`) but the docstring description was ambiguous for models. Fix: clearer docstring with concrete example + defensive input coercion.
+
+---
+
 ## Future Considerations
 
 ### Potential Features
@@ -183,6 +195,7 @@
 | 0.3.0 | 1.2 | Advanced | +2 tools (profile, viewshed), haversine distance, DDA ray-casting, 883 tests (95% coverage) |
 | 0.4.0 | 1.2+2.0 | Contour + Sources | +1 tool (contour), SRTM/3DEP/FABDEM download integration, 932 tests (95% coverage) |
 | 0.5.0 | 2.1 | Watershed + License | +1 tool (watershed), FABDEM license warnings, 993 tests (95% coverage) |
+| 0.5.1 | 2.2 | LLM Robustness | `dem_fetch_points` input normalization, improved schema docstrings, 1006 tests (95% coverage) |
 
 ---
 

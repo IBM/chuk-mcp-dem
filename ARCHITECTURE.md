@@ -37,7 +37,7 @@ at server startup, not at module import time.
 
 ### 6. Test Coverage >90% per File, 95%+ Overall
 
-993 tests across 8 test files. Overall project coverage is 95%.
+1006 tests across 8 test files. Overall project coverage is 95%.
 Every source module maintains at least 78% line coverage (async_server.py,
 which has a short `if __name__` block), with most modules at 95-100%.
 Tests mock at the `DEMManager` level for tool tests, and at the rasterio

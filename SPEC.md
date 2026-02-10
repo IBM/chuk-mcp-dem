@@ -216,7 +216,7 @@ Get elevations at multiple geographic coordinates in one call.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `points` | `float[N][2]` | *required* | Array of [lon, lat] coordinate pairs |
+| `points` | `float[N][2]` | *required* | Nested array of [lon, lat] numeric pairs, e.g. `[[9.19, 45.62], [9.28, 45.63]]`. String and flat-list formats are auto-normalized. |
 | `source` | `str?` | `cop30` | DEM source identifier |
 | `interpolation` | `str` | `bilinear` | Interpolation method |
 

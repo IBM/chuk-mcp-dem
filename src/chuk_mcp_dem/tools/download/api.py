@@ -29,6 +29,52 @@ from ...models.responses import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_points(points: list) -> list[list[float]]:
+    """Normalize points input to [[lon, lat], ...] format.
+
+    Handles common LLM mistakes:
+    - String elements: ["9.28,45.62"] → [[9.28, 45.62]]
+    - JSON string elements: ["[9.28, 45.62]"] → [[9.28, 45.62]]
+    - Flat numeric list: [9.28, 45.62, 9.29, 45.63] → [[9.28, 45.62], [9.29, 45.63]]
+    """
+    import json
+
+    if not points:
+        return points
+
+    # Flat numeric list — pair up consecutive values
+    if all(isinstance(p, (int, float)) for p in points):
+        if len(points) % 2 != 0:
+            raise ValueError(
+                f"Flat points list has odd length ({len(points)}); "
+                "expected [lon, lat, lon, lat, ...]"
+            )
+        return [[float(points[i]), float(points[i + 1])] for i in range(0, len(points), 2)]
+
+    normalized = []
+    for p in points:
+        if isinstance(p, str):
+            # Try JSON parse first: "[9.28, 45.62]"
+            try:
+                parsed = json.loads(p)
+                if isinstance(parsed, list) and len(parsed) == 2:
+                    normalized.append([float(parsed[0]), float(parsed[1])])
+                    continue
+            except (json.JSONDecodeError, ValueError):
+                pass
+            # Fall back to comma-split: "9.28,45.62"
+            parts = p.split(",")
+            if len(parts) == 2:
+                normalized.append([float(parts[0].strip()), float(parts[1].strip())])
+                continue
+            raise ValueError(f"Cannot parse point string: {p!r}")
+        elif isinstance(p, (list, tuple)) and len(p) == 2:
+            normalized.append([float(p[0]), float(p[1])])
+        else:
+            raise ValueError(f"Invalid point format: {p!r}")
+    return normalized
+
+
 def register_download_tools(mcp, manager):
     """Register download tools with the MCP server."""
 
@@ -149,7 +195,8 @@ def register_download_tools(mcp, manager):
         """Get elevations at multiple geographic points in a single request.
 
         Args:
-            points: List of [lon, lat] coordinate pairs
+            points: Nested array of [lon, lat] numeric pairs,
+                    e.g. [[9.19, 45.62], [9.28, 45.63], [9.30, 45.61]]
             source: DEM source (cop30, cop90, srtm, aster, 3dep, fabdem)
             interpolation: Sampling method (nearest, bilinear, cubic)
             output_mode: "json" or "text"
@@ -158,6 +205,8 @@ def register_download_tools(mcp, manager):
             Elevation for each point with range statistics
         """
         try:
+            points = _normalize_points(points)
+
             if interpolation not in INTERPOLATION_METHODS:
                 raise ValueError(
                     ErrorMessages.INVALID_INTERPOLATION.format(

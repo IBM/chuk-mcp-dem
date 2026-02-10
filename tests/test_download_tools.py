@@ -600,6 +600,108 @@ class TestDemFetchPoints:
 
 
 # ===========================================================================
+# _normalize_points  (LLM input coercion)
+# ===========================================================================
+
+
+class TestNormalizePoints:
+    """Tests for _normalize_points — handles malformed LLM inputs."""
+
+    def setup_method(self):
+        from chuk_mcp_dem.tools.download.api import _normalize_points
+        self.normalize = _normalize_points
+
+    def test_correct_input_unchanged(self):
+        points = [[9.28, 45.62], [9.29, 45.63]]
+        assert self.normalize(points) == [[9.28, 45.62], [9.29, 45.63]]
+
+    def test_string_comma_separated(self):
+        """LLM sends ["9.28,45.62", "9.29,45.63"]."""
+        points = ["9.28,45.62", "9.29,45.63"]
+        assert self.normalize(points) == [[9.28, 45.62], [9.29, 45.63]]
+
+    def test_string_json_array(self):
+        """LLM sends ["[9.28, 45.62]", "[9.29, 45.63]"]."""
+        points = ["[9.28, 45.62]", "[9.29, 45.63]"]
+        assert self.normalize(points) == [[9.28, 45.62], [9.29, 45.63]]
+
+    def test_flat_numeric_list(self):
+        """LLM sends [9.28, 45.62, 9.29, 45.63] instead of nested."""
+        points = [9.28, 45.62, 9.29, 45.63]
+        assert self.normalize(points) == [[9.28, 45.62], [9.29, 45.63]]
+
+    def test_flat_odd_length_raises(self):
+        """Flat list with odd number of values is an error."""
+        with pytest.raises(ValueError, match="odd length"):
+            self.normalize([9.28, 45.62, 9.29])
+
+    def test_empty_list_passthrough(self):
+        assert self.normalize([]) == []
+
+    def test_tuple_elements(self):
+        """Tuples are accepted and converted to lists."""
+        points = [(9.28, 45.62), (9.29, 45.63)]
+        assert self.normalize(points) == [[9.28, 45.62], [9.29, 45.63]]
+
+    def test_integer_coordinates(self):
+        """Integer coordinates are converted to float."""
+        points = [[9, 45], [10, 46]]
+        assert self.normalize(points) == [[9.0, 45.0], [10.0, 46.0]]
+
+    def test_string_with_spaces(self):
+        """Comma-separated strings with whitespace."""
+        points = [" 9.28 , 45.62 "]
+        assert self.normalize(points) == [[9.28, 45.62]]
+
+    def test_invalid_string_raises(self):
+        """Unparseable strings raise ValueError."""
+        with pytest.raises(ValueError, match="Cannot parse"):
+            self.normalize(["not_a_point"])
+
+
+class TestDemFetchPointsNormalization:
+    """Integration tests: dem_fetch_points handles malformed inputs via normalization."""
+
+    @pytest.mark.asyncio
+    async def test_string_elements_accepted(self, download_tools, standard_multi_point_result):
+        tools, manager = download_tools
+        manager.fetch_points = AsyncMock(return_value=standard_multi_point_result)
+
+        result = await tools["dem_fetch_points"](points=["10.0,50.0", "11.0,51.0", "12.0,52.0"])
+        data = json.loads(result)
+
+        assert data["point_count"] == 3
+        call_kwargs = manager.fetch_points.call_args.kwargs
+        assert call_kwargs["points"] == [[10.0, 50.0], [11.0, 51.0], [12.0, 52.0]]
+
+    @pytest.mark.asyncio
+    async def test_flat_list_accepted(self, download_tools, standard_multi_point_result):
+        tools, manager = download_tools
+        manager.fetch_points = AsyncMock(return_value=standard_multi_point_result)
+
+        result = await tools["dem_fetch_points"](points=[10.0, 50.0, 11.0, 51.0, 12.0, 52.0])
+        data = json.loads(result)
+
+        assert data["point_count"] == 3
+        call_kwargs = manager.fetch_points.call_args.kwargs
+        assert call_kwargs["points"] == [[10.0, 50.0], [11.0, 51.0], [12.0, 52.0]]
+
+    @pytest.mark.asyncio
+    async def test_json_string_elements_accepted(self, download_tools, standard_multi_point_result):
+        tools, manager = download_tools
+        manager.fetch_points = AsyncMock(return_value=standard_multi_point_result)
+
+        result = await tools["dem_fetch_points"](
+            points=["[10.0, 50.0]", "[11.0, 51.0]", "[12.0, 52.0]"]
+        )
+        data = json.loads(result)
+
+        assert data["point_count"] == 3
+        call_kwargs = manager.fetch_points.call_args.kwargs
+        assert call_kwargs["points"] == [[10.0, 50.0], [11.0, 51.0], [12.0, 52.0]]
+
+
+# ===========================================================================
 # dem_check_coverage
 # ===========================================================================
 
