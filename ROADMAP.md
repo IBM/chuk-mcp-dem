@@ -1,14 +1,14 @@
 # chuk-mcp-dem Roadmap
 
-## Current State (v0.5.1)
+## Current State (v0.6.0)
 
-**Working:** 18 tools functional with full DEM discovery, coverage check, fetch, point query, terrain analysis (hillshade/slope/aspect/curvature/TRI/contour/watershed), profile, and viewshed pipeline.
+**Working:** 22 tools functional with full DEM discovery, coverage check, fetch, point query, terrain analysis (hillshade/slope/aspect/curvature/TRI/contour/watershed), profile, viewshed, and ML-enhanced terrain analysis (landform classification, anomaly detection, temporal change, feature detection) pipeline.
 
-**Test Stats:** 1006 tests, 95% coverage. All checks pass (ruff, mypy, bandit, pytest).
+**Test Stats:** 1167 tests. All checks pass (ruff, mypy, bandit, pytest).
 
 **Infrastructure:** Project scaffold, pyproject.toml, Makefile, CI/CD (GitHub Actions), Dockerfile.
 
-**Implemented:** 6 DEM sources (Copernicus GLO-30/90, SRTM, ASTER, 3DEP, FABDEM), tile URL construction for Copernicus/SRTM/3DEP/FABDEM, multi-tile merging, void filling, point sampling (nearest/bilinear/cubic), hillshade auto-preview, coverage checking, size estimation, LRU tile cache (100 MB), artifact storage via chuk-artifacts, Pydantic v2 response models, dual output mode, terrain derivatives (hillshade/slope/aspect/curvature/TRI/contour/watershed), elevation profiles, viewshed analysis, FABDEM license warnings, LLM input normalization for `dem_fetch_points`.
+**Implemented:** 6 DEM sources (Copernicus GLO-30/90, SRTM, ASTER, 3DEP, FABDEM), tile URL construction for Copernicus/SRTM/3DEP/FABDEM, multi-tile merging, void filling, point sampling (nearest/bilinear/cubic), hillshade auto-preview, coverage checking, size estimation, LRU tile cache (100 MB), artifact storage via chuk-artifacts, Pydantic v2 response models, dual output mode, terrain derivatives (hillshade/slope/aspect/curvature/TRI/contour/watershed), elevation profiles, viewshed analysis, FABDEM license warnings, LLM input normalization for `dem_fetch_points`, rule-based landform classification, Isolation Forest anomaly detection, temporal elevation change detection, CNN-inspired multi-angle hillshade feature detection.
 
 ---
 
@@ -168,14 +168,121 @@
 
 ---
 
+## Phase 3.0: ML-Enhanced Terrain Analysis (v0.6.0) -- COMPLETE
+
+Tier 2 upgrade: the existing 18 tools compute terrain derivatives but don't *recognise* anything. Phase 3.0 adds classification, anomaly detection, feature detection, and temporal comparison. All new tools consume existing tier 1 outputs (slope, curvature, TRI, hillshade) as inputs.
+
+**Optional dependency:** `pip install chuk-mcp-dem[ml]` adds scikit-learn. Base install unchanged. No torch/torchvision required -- feature detection uses scipy convolutional filters (Sobel on multi-angle hillshade).
+
+### 3.0.1 Landform Classification (1 tool)
+
+- [x] `dem_classify_landforms` -- classify each pixel into geomorphological types (ridge, valley, plateau, escarpment, depression, saddle, plain, terrace, alluvial fan)
+- [x] `compute_landforms()` in `raster_io.py` -- rule-based (threshold on slope + curvature + TRI)
+- [x] `landform_to_png()` -- categorical colourmap for landform classes
+- [x] `LandformResponse` Pydantic v2 response model (`artifact_ref`, `class_distribution`, `dominant_landform`)
+- [x] `DEMManager.fetch_landforms()` async method
+
+### 3.0.2 Terrain Anomaly Detection (1 tool)
+
+- [x] `dem_detect_anomalies` -- detect terrain features that don't fit the natural landscape pattern (anthropogenic features, earthworks, quarries, old roads)
+- [x] `compute_anomaly_scores()` in `raster_io.py` -- stack slope/curvature/TRI/roughness into per-pixel feature vectors, fit Isolation Forest, threshold on anomaly scores
+- [x] `anomaly_to_png()` -- heatmap of anomaly scores
+- [x] `AnomalyDetectionResponse` Pydantic v2 response model (`artifact_ref`, `anomaly_count`, `anomalies: list[TerrainAnomaly]`)
+- [x] `TerrainAnomaly` model (bbox, area_m2, confidence, mean_anomaly_score)
+- [x] `DEMManager.fetch_anomalies()` async method
+
+**Implementation note:** Uses Isolation Forest (scikit-learn) on terrain feature vectors already computed by existing functions. No per-region training, no model weights. Autoencoder-based detection is a v2.0 upgrade path if needed.
+
+### 3.0.3 Temporal Elevation Change (1 tool)
+
+- [x] `dem_compare_temporal` -- compute elevation change between two DEM sources or acquisition dates
+- [x] `compute_elevation_change()` in `raster_io.py` -- aligned pixel subtraction with significance thresholding
+- [x] `change_to_png()` -- diverging colourmap (blue = loss, red = gain)
+- [x] `TemporalChangeResponse` Pydantic v2 response model (`artifact_ref`, `volume_gained_m3`, `volume_lost_m3`, `significant_regions: list[ChangeRegion]`)
+- [x] `ChangeRegion` model (bbox, area_m2, mean_change_m, max_change_m, change_type)
+- [x] `DEMManager.fetch_temporal_change()` async method
+
+### 3.0.4 Feature Detection (1 tool)
+
+- [x] `dem_detect_features` -- CNN-inspired detection of geomorphological features using multi-angle hillshade with Sobel edge filters
+- [x] `compute_feature_detection()` in `raster_io.py` -- generate 8-angle hillshade stack, apply Sobel edge filters, compute edge consensus, classify features (peak, ridge, valley, cliff, saddle, channel) using slope/curvature/edge thresholds, morphological cleanup, connected component labelling
+- [x] `feature_to_png()` -- categorical colourmap (red=peak, brown=ridge, green=valley, orange=cliff, gold=saddle, blue=channel)
+- [x] `TerrainFeature` model (bbox, area_m2, feature_type, confidence)
+- [x] `FeatureDetectionResponse` Pydantic v2 response model (`artifact_ref`, `feature_count`, `feature_summary`, `features: list[TerrainFeature]`)
+- [x] `DEMManager.fetch_features()` async method
+
+**Implementation note:** Uses scipy convolutional filters (Sobel) on multi-angle hillshade -- same mathematical approach as CNNs but with hand-crafted kernels. Only needs scipy + numpy (already dependencies). No torch/torchvision required, no model weight downloads.
+
+### 3.0.5 Tests
+
+- [x] Unit tests for `compute_landforms()`, `compute_anomaly_scores()`, `compute_elevation_change()`, `compute_feature_detection()`
+- [x] Unit tests for `landform_to_png()`, `anomaly_to_png()`, `change_to_png()`, `feature_to_png()`
+- [x] Integration tests for all 4 new tool endpoints
+- [x] Edge cases: flat terrain (no anomalies/features), identical sources (zero change), missing `[ml]` extra (graceful error)
+- [x] 1167 tests total, all passing
+
+### 3.0.6 Examples
+
+- [x] `landform_classification_demo.py` -- Matterhorn landform classification
+- [x] `anomaly_detection_demo.py` -- Hoover Dam anomaly detection (Isolation Forest)
+- [x] `temporal_change_demo.py` -- Mount St. Helens elevation change (GLO-90 vs GLO-30)
+- [x] `feature_detection_demo.py` -- Grand Canyon CNN-inspired feature detection
+- [x] `ml_terrain_analysis_demo.py` -- Combined Grand Canyon showcase of all 4 Phase 3.0 tools
+
+---
+
+## Phase 3.1: Foundation Model Integration (v0.7.0)
+
+Tier 3 upgrade: contextual reasoning about terrain. Takes any terrain derivative or analysis output and sends it to a vision-capable LLM for interpretation.
+
+**Optional dependency:** `pip install chuk-mcp-dem[interpret]` adds chuk-llm. Base install unchanged.
+
+### 3.1.1 Terrain Interpretation (1 tool)
+
+- [ ] `dem_interpret` -- send any terrain artifact to a vision model for natural language interpretation
+- [ ] Read artifact from store → render to image if needed → call vision model via chuk-llm → return structured response
+- [ ] `InterpretResponse` Pydantic v2 response model (`interpretation`, `features_identified: list[dict]`, `confidence`, `recommended_next_steps: list[str]`)
+- [ ] `DEMManager.fetch_interpretation()` async method
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `artifact_ref` | `str` | *required* | Any terrain raster artifact reference |
+| `context` | `str` | `""` | Domain context: `archaeological_survey`, `flood_risk`, `military_history`, `geological` |
+| `question` | `str` | `""` | Specific question about the terrain (e.g. "are there defensive earthworks visible?") |
+
+**Example pipeline:** `dem_fetch` -> `dem_hillshade` -> `dem_detect_anomalies` -> `dem_interpret` -> "Three circular features visible on the south-facing slope, consistent with Bronze Age barrow cemetery. Recommend high-resolution LiDAR survey and STAC multispectral analysis to confirm vegetation stress patterns."
+
+### 3.1.2 Tests
+
+- [ ] Unit tests for artifact-to-image rendering pipeline
+- [ ] Integration tests with mocked chuk-llm responses
+- [ ] Edge cases: missing artifact, unsupported format, model timeout
+- [ ] Missing `[interpret]` extra (graceful error with install guidance)
+
+---
+
+## Dependency Tiers
+
+| Install | Adds | Tier |
+|---------|------|------|
+| `chuk-mcp-dem` | numpy, rasterio, scipy | Tier 1: deterministic compute (18 tools) + feature detection |
+| `chuk-mcp-dem[ml]` | + scikit-learn | Tier 2: recognition (4 tools -- landforms, anomalies, temporal, features) |
+| `chuk-mcp-dem[interpret]` | + chuk-llm | Tier 3: reasoning (1 tool) |
+
+Note: Feature detection (`dem_detect_features`) uses scipy convolutional filters only -- no torch/torchvision required, no model weight downloads. Anomaly detection (`dem_detect_anomalies`) requires scikit-learn for Isolation Forest. Landform classification and temporal change work with base install.
+
+---
+
 ## Future Considerations
 
 ### Potential Features
 
 - **Bathymetry**: GEBCO ocean depth data as an additional source
 - **Planetary DEMs**: Mars MOLA, Moon LOLA via PDS archives
-- **Difference maps**: Compute elevation change between two DEM sources/dates
 - **Cross-section export**: Export profiles as CSV/GeoJSON for external tools
+- **Autoencoder anomaly detection**: Replace Isolation Forest with trained autoencoder for higher sensitivity (v2.0 upgrade path for `dem_detect_anomalies`)
 
 ### Not in Scope (for now)
 
@@ -196,6 +303,8 @@
 | 0.4.0 | 1.2+2.0 | Contour + Sources | +1 tool (contour), SRTM/3DEP/FABDEM download integration, 932 tests (95% coverage) |
 | 0.5.0 | 2.1 | Watershed + License | +1 tool (watershed), FABDEM license warnings, 993 tests (95% coverage) |
 | 0.5.1 | 2.2 | LLM Robustness | `dem_fetch_points` input normalization, improved schema docstrings, 1006 tests (95% coverage) |
+| 0.6.0 | 3.0 | ML Terrain Analysis | +4 tools (landforms, anomalies, temporal change, feature detection), `[ml]` optional extra, 1167 tests |
+| 0.7.0 | 3.1 | Foundation Model | +1 tool (interpret), chuk-llm integration, `[interpret]` optional extra |
 
 ---
 

@@ -17,10 +17,13 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from chuk_mcp_dem.core.dem_manager import (
-    TerrainResult,
-    ProfileResult,
-    ViewshedResult,
+    AnomalyResult,
     ContourResult,
+    LandformResult,
+    ProfileResult,
+    TemporalChangeResult,
+    TerrainResult,
+    ViewshedResult,
 )
 
 
@@ -1680,7 +1683,7 @@ class TestDemViewshed:
 
 
 class TestAnalysisToolRegistration:
-    """Verify that all 8 analysis tools are registered."""
+    """Verify that all 13 analysis tools are registered."""
 
     def test_all_tools_registered(self, analysis_tools):
         tools, _ = analysis_tools
@@ -1694,6 +1697,10 @@ class TestAnalysisToolRegistration:
             "dem_watershed",
             "dem_profile",
             "dem_viewshed",
+            "dem_compare_temporal",
+            "dem_classify_landforms",
+            "dem_detect_anomalies",
+            "dem_detect_features",
         }
         assert set(tools.keys()) == expected
 
@@ -2116,3 +2123,345 @@ class TestFabdemLicenseWarning:
 
         assert data["license_warning"] is not None
         assert "non-commercial" in data["license_warning"]
+
+
+# ===========================================================================
+# Phase 3.0: ML-enhanced terrain analysis tool tests
+# ===========================================================================
+
+
+@pytest.fixture
+def standard_temporal_change_result():
+    return TemporalChangeResult(
+        artifact_ref="dem/change123.tif",
+        preview_ref="dem/change123.png",
+        crs="EPSG:4326",
+        resolution_m=30.0,
+        shape=[100, 100],
+        significance_threshold_m=1.0,
+        volume_gained_m3=50000.0,
+        volume_lost_m3=30000.0,
+        significant_regions=[
+            {
+                "bbox": [7.1, 46.1, 7.2, 46.2],
+                "area_m2": 500000.0,
+                "mean_change_m": 2.5,
+                "max_change_m": 5.0,
+                "change_type": "gain",
+            }
+        ],
+        dtype="float32",
+    )
+
+
+@pytest.fixture
+def standard_landform_result():
+    return LandformResult(
+        artifact_ref="dem/landform123.tif",
+        preview_ref="dem/landform123.png",
+        crs="EPSG:4326",
+        resolution_m=30.0,
+        shape=[100, 100],
+        class_distribution={"plain": 60.0, "ridge": 15.0, "valley": 25.0},
+        dominant_landform="plain",
+        dtype="uint8",
+    )
+
+
+@pytest.fixture
+def standard_anomaly_result():
+    return AnomalyResult(
+        artifact_ref="dem/anomaly123.tif",
+        preview_ref="dem/anomaly123.png",
+        crs="EPSG:4326",
+        resolution_m=30.0,
+        shape=[100, 100],
+        anomaly_count=3,
+        anomalies=[
+            {
+                "bbox": [7.1, 46.1, 7.2, 46.2],
+                "area_m2": 1000.0,
+                "confidence": 0.85,
+                "mean_anomaly_score": 0.8,
+            }
+        ],
+        dtype="float32",
+    )
+
+
+class TestDemCompareTemporal:
+    @pytest.mark.asyncio
+    async def test_json_success(self, analysis_tools, standard_temporal_change_result):
+        tools, manager = analysis_tools
+        manager.fetch_temporal_change = AsyncMock(
+            return_value=standard_temporal_change_result
+        )
+
+        result = await tools["dem_compare_temporal"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert data["artifact_ref"] == "dem/change123.tif"
+        assert data["before_source"] == "srtm"
+        assert data["after_source"] == "cop30"
+        assert data["volume_gained_m3"] == 50000.0
+        assert data["volume_lost_m3"] == 30000.0
+        assert len(data["significant_regions"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_text_success(self, analysis_tools, standard_temporal_change_result):
+        tools, manager = analysis_tools
+        manager.fetch_temporal_change = AsyncMock(
+            return_value=standard_temporal_change_result
+        )
+
+        result = await tools["dem_compare_temporal"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text"
+        )
+
+        assert "Temporal Change:" in result
+        assert "dem/change123.tif" in result
+
+    @pytest.mark.asyncio
+    async def test_custom_sources(self, analysis_tools, standard_temporal_change_result):
+        tools, manager = analysis_tools
+        manager.fetch_temporal_change = AsyncMock(
+            return_value=standard_temporal_change_result
+        )
+
+        await tools["dem_compare_temporal"](
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            before_source="cop30",
+            after_source="cop90",
+        )
+
+        call_kwargs = manager.fetch_temporal_change.call_args.kwargs
+        assert call_kwargs["before_source"] == "cop30"
+        assert call_kwargs["after_source"] == "cop90"
+
+    @pytest.mark.asyncio
+    async def test_invalid_format(self, analysis_tools):
+        tools, _ = analysis_tools
+        result = await tools["dem_compare_temporal"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_format="bmp"
+        )
+        data = json.loads(result)
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_manager_exception(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_temporal_change = AsyncMock(side_effect=RuntimeError("fail"))
+        result = await tools["dem_compare_temporal"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_fabdem_warning(self, analysis_tools, standard_temporal_change_result):
+        tools, manager = analysis_tools
+        manager.fetch_temporal_change = AsyncMock(
+            return_value=standard_temporal_change_result
+        )
+        result = await tools["dem_compare_temporal"](
+            bbox=[7.0, 46.0, 8.0, 47.0], after_source="fabdem"
+        )
+        data = json.loads(result)
+        assert data["license_warning"] is not None
+
+
+class TestDemClassifyLandforms:
+    @pytest.mark.asyncio
+    async def test_json_success(self, analysis_tools, standard_landform_result):
+        tools, manager = analysis_tools
+        manager.fetch_landforms = AsyncMock(return_value=standard_landform_result)
+
+        result = await tools["dem_classify_landforms"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert data["artifact_ref"] == "dem/landform123.tif"
+        assert data["dominant_landform"] == "plain"
+        assert data["class_distribution"]["plain"] == 60.0
+
+    @pytest.mark.asyncio
+    async def test_text_success(self, analysis_tools, standard_landform_result):
+        tools, manager = analysis_tools
+        manager.fetch_landforms = AsyncMock(return_value=standard_landform_result)
+
+        result = await tools["dem_classify_landforms"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text"
+        )
+        assert "Landforms:" in result
+        assert "plain" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_method(self, analysis_tools):
+        tools, _ = analysis_tools
+        result = await tools["dem_classify_landforms"](
+            bbox=[7.0, 46.0, 8.0, 47.0], method="cnn"
+        )
+        data = json.loads(result)
+        assert "error" in data
+        assert "cnn" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_format(self, analysis_tools):
+        tools, _ = analysis_tools
+        result = await tools["dem_classify_landforms"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_format="bmp"
+        )
+        data = json.loads(result)
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_manager_exception(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_landforms = AsyncMock(side_effect=RuntimeError("fail"))
+        result = await tools["dem_classify_landforms"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+        assert "error" in data
+
+
+class TestDemDetectAnomalies:
+    @pytest.mark.asyncio
+    async def test_json_success(self, analysis_tools, standard_anomaly_result):
+        tools, manager = analysis_tools
+        manager.fetch_anomalies = AsyncMock(return_value=standard_anomaly_result)
+
+        result = await tools["dem_detect_anomalies"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+
+        assert data["artifact_ref"] == "dem/anomaly123.tif"
+        assert data["anomaly_count"] == 3
+        assert len(data["anomalies"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_text_success(self, analysis_tools, standard_anomaly_result):
+        tools, manager = analysis_tools
+        manager.fetch_anomalies = AsyncMock(return_value=standard_anomaly_result)
+
+        result = await tools["dem_detect_anomalies"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text"
+        )
+        assert "Anomalies:" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_sensitivity(self, analysis_tools):
+        tools, _ = analysis_tools
+        result = await tools["dem_detect_anomalies"](
+            bbox=[7.0, 46.0, 8.0, 47.0], sensitivity=1.5
+        )
+        data = json.loads(result)
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_invalid_format(self, analysis_tools):
+        tools, _ = analysis_tools
+        result = await tools["dem_detect_anomalies"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_format="bmp"
+        )
+        data = json.loads(result)
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_sklearn_import_error(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_anomalies = AsyncMock(
+            side_effect=ImportError("No module named 'sklearn'")
+        )
+        result = await tools["dem_detect_anomalies"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+        assert "error" in data
+        assert "scikit-learn" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_manager_exception(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_anomalies = AsyncMock(side_effect=RuntimeError("fail"))
+        result = await tools["dem_detect_anomalies"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+        assert "error" in data
+
+
+class TestDemDetectFeatures:
+    """Tests for dem_detect_features tool."""
+
+    @pytest.mark.asyncio
+    async def test_json_success(self, analysis_tools):
+        tools, manager = analysis_tools
+        from chuk_mcp_dem.core.dem_manager import FeatureResult
+        manager.fetch_features = AsyncMock(
+            return_value=FeatureResult(
+                artifact_ref="feat123",
+                preview_ref="prev123",
+                crs="EPSG:4326",
+                resolution_m=30.0,
+                shape=[100, 100],
+                feature_count=3,
+                feature_summary={"ridge": 2, "peak": 1},
+                features=[
+                    {"bbox": [7, 46, 8, 47], "area_m2": 500.0, "feature_type": "ridge", "confidence": 0.7},
+                    {"bbox": [7, 46, 7.5, 46.5], "area_m2": 300.0, "feature_type": "ridge", "confidence": 0.6},
+                    {"bbox": [7.5, 46.5, 8, 47], "area_m2": 100.0, "feature_type": "peak", "confidence": 0.9},
+                ],
+                dtype="float32",
+            )
+        )
+
+        result = await tools["dem_detect_features"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+        assert data["feature_count"] == 3
+        assert data["method"] == "cnn_hillshade"
+        assert "artifact_ref" in data
+        assert len(data["features"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_text_output(self, analysis_tools):
+        tools, manager = analysis_tools
+        from chuk_mcp_dem.core.dem_manager import FeatureResult
+        manager.fetch_features = AsyncMock(
+            return_value=FeatureResult(
+                artifact_ref="feat123",
+                preview_ref=None,
+                crs="EPSG:4326",
+                resolution_m=30.0,
+                shape=[100, 100],
+                feature_count=2,
+                feature_summary={"valley": 2},
+                features=[
+                    {"bbox": [7, 46, 8, 47], "area_m2": 500.0, "feature_type": "valley", "confidence": 0.7},
+                    {"bbox": [7, 46, 7.5, 46.5], "area_m2": 300.0, "feature_type": "valley", "confidence": 0.6},
+                ],
+                dtype="float32",
+            )
+        )
+
+        result = await tools["dem_detect_features"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text"
+        )
+        assert "Feature Detection:" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_method(self, analysis_tools):
+        tools, _ = analysis_tools
+        result = await tools["dem_detect_features"](
+            bbox=[7.0, 46.0, 8.0, 47.0], method="bad"
+        )
+        data = json.loads(result)
+        assert "error" in data
+        assert "Invalid feature method" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_format(self, analysis_tools):
+        tools, _ = analysis_tools
+        result = await tools["dem_detect_features"](
+            bbox=[7.0, 46.0, 8.0, 47.0], output_format="bad"
+        )
+        data = json.loads(result)
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_manager_exception(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_features = AsyncMock(side_effect=RuntimeError("bad source"))
+        result = await tools["dem_detect_features"](bbox=[7.0, 46.0, 8.0, 47.0])
+        data = json.loads(result)
+        assert "error" in data

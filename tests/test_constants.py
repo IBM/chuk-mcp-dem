@@ -6,10 +6,12 @@ from chuk_mcp_dem.constants import (
     ALL_SOURCE_IDS,
     ANALYSIS_TOOLS,
     DEFAULT_ALTITUDE,
+    DEFAULT_ANOMALY_SENSITIVITY,
     DEFAULT_AZIMUTH,
     DEFAULT_CONTOUR_INTERVAL_M,
     DEFAULT_FLAT_VALUE,
     DEFAULT_INTERPOLATION,
+    DEFAULT_SIGNIFICANCE_THRESHOLD_M,
     DEFAULT_SOURCE,
     DEFAULT_WINDOW_SIZE,
     DEFAULT_Z_FACTOR,
@@ -17,6 +19,8 @@ from chuk_mcp_dem.constants import (
     DEMSource,
     FABDEM_LICENSE_WARNING,
     INTERPOLATION_METHODS,
+    LANDFORM_CLASSES,
+    LANDFORM_METHODS,
     MAX_DOWNLOAD_BYTES,
     OUTPUT_FORMATS,
     RETRY_ATTEMPTS,
@@ -336,14 +340,26 @@ class TestTerrainDerivatives:
 
 
 class TestAnalysisTools:
-    def test_has_two_entries(self):
-        assert len(ANALYSIS_TOOLS) == 2
+    def test_has_six_entries(self):
+        assert len(ANALYSIS_TOOLS) == 6
 
     def test_contains_profile(self):
         assert "profile" in ANALYSIS_TOOLS
 
     def test_contains_viewshed(self):
         assert "viewshed" in ANALYSIS_TOOLS
+
+    def test_contains_temporal_change(self):
+        assert "temporal_change" in ANALYSIS_TOOLS
+
+    def test_contains_landforms(self):
+        assert "landforms" in ANALYSIS_TOOLS
+
+    def test_contains_anomalies(self):
+        assert "anomalies" in ANALYSIS_TOOLS
+
+    def test_contains_features(self):
+        assert "features" in ANALYSIS_TOOLS
 
 
 class TestOutputFormats:
@@ -568,3 +584,102 @@ class TestLicenseWarning:
     def test_fabdem_warning_mentions_bristol(self):
         warning = get_license_warning("fabdem")
         assert "Bristol" in warning
+
+
+# ── ML / Phase 3.0 constants ──────────────────────────────────────
+
+
+class TestTemporalChangeDefaults:
+    def test_default_significance_threshold(self):
+        assert DEFAULT_SIGNIFICANCE_THRESHOLD_M == 1.0
+
+    def test_significance_threshold_positive(self):
+        assert DEFAULT_SIGNIFICANCE_THRESHOLD_M > 0
+
+
+class TestLandformConstants:
+    def test_landform_classes_has_nine_entries(self):
+        assert len(LANDFORM_CLASSES) == 9
+
+    def test_landform_classes_contains_plain(self):
+        assert "plain" in LANDFORM_CLASSES
+
+    def test_landform_classes_contains_ridge(self):
+        assert "ridge" in LANDFORM_CLASSES
+
+    def test_landform_classes_contains_valley(self):
+        assert "valley" in LANDFORM_CLASSES
+
+    def test_landform_classes_contains_escarpment(self):
+        assert "escarpment" in LANDFORM_CLASSES
+
+    def test_landform_methods_contains_rule_based(self):
+        assert "rule_based" in LANDFORM_METHODS
+
+
+class TestAnomalyDefaults:
+    def test_default_anomaly_sensitivity(self):
+        assert DEFAULT_ANOMALY_SENSITIVITY == 0.1
+
+    def test_sensitivity_between_zero_and_one(self):
+        assert 0 < DEFAULT_ANOMALY_SENSITIVITY < 1
+
+
+class TestPhase3ErrorMessages:
+    def test_invalid_sensitivity_format(self):
+        msg = ErrorMessages.INVALID_SENSITIVITY.format(1.5)
+        assert "1.5" in msg
+
+    def test_invalid_landform_method_format(self):
+        msg = ErrorMessages.INVALID_LANDFORM_METHOD.format("cnn", "rule_based")
+        assert "cnn" in msg and "rule_based" in msg
+
+    def test_sklearn_not_available(self):
+        assert "scikit-learn" in ErrorMessages.SKLEARN_NOT_AVAILABLE
+
+    def test_feature_detection_not_available(self):
+        assert "not yet available" in ErrorMessages.FEATURE_DETECTION_NOT_AVAILABLE
+
+    def test_invalid_feature_method_format(self):
+        msg = ErrorMessages.INVALID_FEATURE_METHOD.format("bad", "cnn_hillshade")
+        assert "bad" in msg and "cnn_hillshade" in msg
+
+
+class TestFeatureConstants:
+    def test_feature_classes_has_seven_entries(self):
+        from chuk_mcp_dem.constants import FEATURE_CLASSES
+
+        assert len(FEATURE_CLASSES) == 7
+
+    def test_feature_classes_starts_with_none(self):
+        from chuk_mcp_dem.constants import FEATURE_CLASSES
+
+        assert FEATURE_CLASSES[0] == "none"
+
+    def test_feature_methods_has_one_entry(self):
+        from chuk_mcp_dem.constants import FEATURE_METHODS
+
+        assert len(FEATURE_METHODS) == 1
+
+    def test_feature_methods_contains_cnn_hillshade(self):
+        from chuk_mcp_dem.constants import FEATURE_METHODS
+
+        assert "cnn_hillshade" in FEATURE_METHODS
+
+
+class TestPhase3SuccessMessages:
+    def test_temporal_change_complete_format(self):
+        msg = SuccessMessages.TEMPORAL_CHANGE_COMPLETE.format("100x100", 5000.0, 3000.0)
+        assert "100x100" in msg and "5000.0" in msg
+
+    def test_landform_complete_format(self):
+        msg = SuccessMessages.LANDFORM_COMPLETE.format("100x100", "plain")
+        assert "100x100" in msg and "plain" in msg
+
+    def test_anomaly_complete_format(self):
+        msg = SuccessMessages.ANOMALY_COMPLETE.format("100x100", 5)
+        assert "100x100" in msg and "5" in msg
+
+    def test_feature_detect_complete_format(self):
+        msg = SuccessMessages.FEATURE_DETECT_COMPLETE.format("100x100", 3)
+        assert "100x100" in msg and "3" in msg

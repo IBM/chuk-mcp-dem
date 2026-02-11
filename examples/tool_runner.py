@@ -66,7 +66,7 @@ class ToolRunner:
     """
     Run chuk-mcp-dem MCP tools directly from Python.
 
-    All 18 tools are registered and callable via run(tool_name, **kwargs).
+    All 22 tools are registered and callable via run(tool_name, **kwargs).
     Returns parsed JSON (dict/list) by default. Use run_text() for
     human-readable output. An in-memory artifact store is initialized
     automatically.

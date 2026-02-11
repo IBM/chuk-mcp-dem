@@ -150,7 +150,7 @@ def register_discovery_tools(mcp, manager):
                 terrain_derivatives=TERRAIN_DERIVATIVES,
                 analysis_tools=ANALYSIS_TOOLS,
                 output_formats=OUTPUT_FORMATS,
-                tool_count=18,
+                tool_count=22,
                 llm_guidance=(
                     "Use dem_list_sources to discover available DEMs. "
                     "Use dem_describe_source for detailed source info. "

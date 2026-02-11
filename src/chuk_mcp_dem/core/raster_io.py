@@ -1064,6 +1064,531 @@ def _check_line_of_sight(
 
 
 # ---------------------------------------------------------------------------
+# Phase 3.0: ML-enhanced terrain analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_elevation_change(
+    before: FloatArray,
+    after: FloatArray,
+    transform: Transform,
+    significance_threshold_m: float = 1.0,
+) -> tuple[FloatArray, list[dict]]:
+    """Compute elevation change between two DEM epochs.
+
+    Args:
+        before: 2D elevation array from earlier epoch
+        after: 2D elevation array from later epoch (same shape)
+        transform: Affine transform (for area calculations)
+        significance_threshold_m: Minimum |change| to count as significant
+
+    Returns:
+        Tuple of (change_array_float32, list_of_change_region_dicts)
+        change_array = after - before (positive = gain, negative = loss)
+    """
+    from scipy.ndimage import label
+
+    change = (after.astype(np.float64) - before.astype(np.float64)).astype(np.float32)
+
+    # Find significant regions
+    significant_mask = np.abs(np.nan_to_num(change, nan=0.0)) >= significance_threshold_m
+    labelled, num_regions = label(significant_mask)
+
+    cellsize_x = abs(float(transform[0]))
+    cellsize_y = abs(float(transform[4]))
+    # Approximate pixel area in m² (mid-latitude correction)
+    nrows = change.shape[0]
+    mid_row = nrows // 2
+    mid_lat_deg = float(transform[5]) + mid_row * float(transform[4])
+    pixel_area_m2 = (
+        cellsize_x * 111320.0 * math.cos(math.radians(mid_lat_deg))
+        * cellsize_y * 111320.0
+    )
+
+    regions: list[dict] = []
+    for region_id in range(1, num_regions + 1):
+        mask = labelled == region_id
+        region_change = change[mask]
+        rows, cols = np.where(mask)
+
+        # Convert pixel bounds to geographic coordinates
+        west = float(transform[2]) + float(cols.min()) * cellsize_x
+        east = float(transform[2]) + float(cols.max() + 1) * cellsize_x
+        north = float(transform[5]) + float(rows.min()) * float(transform[4])
+        south = float(transform[5]) + float(rows.max() + 1) * float(transform[4])
+        if south > north:
+            south, north = north, south
+
+        mean_change = float(np.nanmean(region_change))
+        regions.append({
+            "bbox": [west, south, east, north],
+            "area_m2": float(mask.sum()) * pixel_area_m2,
+            "mean_change_m": mean_change,
+            "max_change_m": float(np.nanmax(np.abs(region_change))),
+            "change_type": "gain" if mean_change > 0 else "loss",
+        })
+
+    return change, regions
+
+
+def change_to_png(
+    change: FloatArray,
+) -> bytes:
+    """Generate an elevation change PNG with diverging blue-red colourmap.
+
+    Blue = elevation loss, White = no change, Red = elevation gain.
+
+    Args:
+        change: 2D change array (metres, positive = gain)
+
+    Returns:
+        PNG bytes
+    """
+    clean = np.nan_to_num(change, nan=0.0)
+    max_abs = max(float(np.max(np.abs(clean))), 0.01)
+    norm = np.clip(clean / max_abs, -1.0, 1.0)  # -1 to +1
+
+    # Blue (loss) -> White (zero) -> Red (gain)
+    r = np.where(norm >= 0, 255, (1.0 + norm) * 255).astype(np.uint8)
+    g = np.where(norm >= 0, (1.0 - norm) * 255, (1.0 + norm) * 255).astype(np.uint8)
+    b = np.where(norm <= 0, 255, (1.0 - norm) * 255).astype(np.uint8)
+
+    rgb = np.stack([r, g, b], axis=-1).astype(np.uint8)
+    img = Image.fromarray(rgb, mode="RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def compute_landforms(
+    elevation: FloatArray,
+    transform: Transform,
+    method: str = "rule_based",
+) -> FloatArray:
+    """Classify each pixel into a landform type using terrain derivatives.
+
+    Rule-based classification using slope, curvature, and TRI:
+      0=plain, 1=ridge, 2=valley, 3=plateau, 4=escarpment,
+      5=depression, 6=saddle, 7=terrace, 8=alluvial_fan
+
+    Args:
+        elevation: 2D elevation array
+        transform: Affine transform
+        method: Classification method (currently only "rule_based")
+
+    Returns:
+        uint8 class array (0-8)
+    """
+    if method != "rule_based":
+        raise ValueError(f"Invalid landform method '{method}'. Available: rule_based")
+
+    slope = compute_slope(elevation, transform, units="degrees")
+    curvature = compute_curvature(elevation, transform)
+    tri = compute_tri(elevation, transform)
+
+    result = np.zeros(elevation.shape, dtype=np.uint8)
+
+    # Escarpment: very steep (class 4)
+    result[slope > 30.0] = 4
+
+    # Ridge: positive curvature + moderate slope (class 1)
+    curv_std = float(np.nanstd(curvature)) or 1.0
+    ridge_mask = (curvature > 0.5 * curv_std) & (slope > 5.0) & (result == 0)
+    result[ridge_mask] = 1
+
+    # Valley: negative curvature + moderate slope (class 2)
+    valley_mask = (curvature < -0.5 * curv_std) & (slope > 5.0) & (result == 0)
+    result[valley_mask] = 2
+
+    # Plateau: low slope, high elevation, low ruggedness (class 3)
+    valid_elev = elevation[~np.isnan(elevation)]
+    elev_p75 = float(np.percentile(valid_elev, 75)) if len(valid_elev) > 0 else 0.0
+    plateau_mask = (
+        (slope < 5.0) & (elevation > elev_p75) & (tri < 20.0) & (result == 0)
+    )
+    result[plateau_mask] = 3
+
+    # Depression: local minimum — all 8 neighbours higher (class 5)
+    padded = np.pad(np.nan_to_num(elevation, nan=1e10), 1, mode="edge")
+    centre = padded[1:-1, 1:-1]
+    is_min = np.ones(elevation.shape, dtype=bool)
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            if dr == 0 and dc == 0:
+                continue
+            is_min &= centre < padded[1 + dr:elevation.shape[0] + 1 + dr,
+                                      1 + dc:elevation.shape[1] + 1 + dc]
+    result[(is_min) & (result == 0)] = 5
+
+    # Terrace: low slope adjacent to steep terrain (class 7)
+    from scipy.ndimage import maximum_filter
+    max_slope = maximum_filter(slope, size=5)
+    terrace_mask = (slope < 10.0) & (max_slope > 20.0) & (result == 0)
+    result[terrace_mask] = 7
+
+    # Alluvial fan: low slope, moderate TRI, slightly concave (class 8)
+    fan_mask = (
+        (slope < 8.0) & (tri > 5.0) & (tri < 30.0)
+        & (curvature < 0) & (result == 0)
+    )
+    result[fan_mask] = 8
+
+    # Saddle: near-zero curvature, low slope, not already classified (class 6)
+    saddle_mask = (
+        (np.abs(curvature) < 0.1 * curv_std) & (slope < 10.0)
+        & (slope > 2.0) & (result == 0)
+    )
+    result[saddle_mask] = 6
+
+    # Remaining pixels stay 0 = plain
+
+    return result
+
+
+# Landform class colour map: index → (R, G, B)
+_LANDFORM_COLOURS = np.array([
+    [200, 230, 200],   # 0: plain - light green
+    [139, 90, 43],     # 1: ridge - brown
+    [34, 139, 34],     # 2: valley - forest green
+    [210, 180, 140],   # 3: plateau - tan
+    [220, 20, 20],     # 4: escarpment - red
+    [70, 130, 180],    # 5: depression - steel blue
+    [255, 215, 0],     # 6: saddle - gold
+    [255, 165, 80],    # 7: terrace - orange
+    [244, 220, 180],   # 8: alluvial fan - sandy
+], dtype=np.uint8)
+
+
+def landform_to_png(
+    landforms: FloatArray,
+) -> bytes:
+    """Generate a landform classification PNG with categorical colours.
+
+    Args:
+        landforms: 2D uint8 class array (0-8)
+
+    Returns:
+        PNG bytes
+    """
+    idx = np.clip(landforms.astype(np.intp), 0, len(_LANDFORM_COLOURS) - 1)
+    rgb = _LANDFORM_COLOURS[idx]
+    img = Image.fromarray(rgb, mode="RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def compute_anomaly_scores(
+    elevation: FloatArray,
+    transform: Transform,
+    sensitivity: float = 0.1,
+) -> tuple[FloatArray, list[dict]]:
+    """Detect terrain anomalies using Isolation Forest on terrain features.
+
+    Stacks slope, curvature, and TRI into per-pixel feature vectors
+    and fits an Isolation Forest to identify outlier terrain.
+
+    Args:
+        elevation: 2D elevation array
+        transform: Affine transform
+        sensitivity: Contamination parameter (0-1, lower = fewer anomalies)
+
+    Returns:
+        Tuple of (anomaly_score_array_float32, list_of_anomaly_region_dicts)
+
+    Raises:
+        ImportError: If scikit-learn is not installed
+    """
+    try:
+        from sklearn.ensemble import IsolationForest
+    except ImportError:
+        raise ImportError(
+            "scikit-learn is required for anomaly detection. "
+            "Install with: pip install chuk-mcp-dem[ml]"
+        )
+
+    from scipy.ndimage import label
+
+    slope = compute_slope(elevation, transform, units="degrees")
+    curvature = compute_curvature(elevation, transform)
+    tri = compute_tri(elevation, transform)
+
+    # Build feature matrix (flatten, replace NaN with 0)
+    features = np.column_stack([
+        np.nan_to_num(slope.ravel(), nan=0.0),
+        np.nan_to_num(curvature.ravel(), nan=0.0),
+        np.nan_to_num(tri.ravel(), nan=0.0),
+    ])
+
+    clf = IsolationForest(contamination=sensitivity, random_state=42, n_jobs=-1)
+    clf.fit(features)
+
+    # decision_function: negative = more anomalous
+    raw_scores = clf.decision_function(features)
+    raw_scores_2d = raw_scores.reshape(elevation.shape)
+
+    # Normalise to 0-1 (higher = more anomalous)
+    score_min = float(raw_scores_2d.min())
+    score_max = float(raw_scores_2d.max())
+    score_range = score_max - score_min if score_max > score_min else 1.0
+    scores = (1.0 - (raw_scores_2d - score_min) / score_range).astype(np.float32)
+
+    # Threshold: anomaly = score > 0.5 (corresponds to Isolation Forest boundary)
+    anomaly_mask = scores > 0.5
+    labelled, num_regions = label(anomaly_mask)
+
+    cellsize_x = abs(float(transform[0]))
+    cellsize_y = abs(float(transform[4]))
+    nrows = elevation.shape[0]
+    mid_row = nrows // 2
+    mid_lat_deg = float(transform[5]) + mid_row * float(transform[4])
+    pixel_area_m2 = (
+        cellsize_x * 111320.0 * math.cos(math.radians(mid_lat_deg))
+        * cellsize_y * 111320.0
+    )
+
+    anomalies: list[dict] = []
+    for region_id in range(1, num_regions + 1):
+        mask = labelled == region_id
+        region_scores = scores[mask]
+        rows, cols = np.where(mask)
+
+        west = float(transform[2]) + float(cols.min()) * cellsize_x
+        east = float(transform[2]) + float(cols.max() + 1) * cellsize_x
+        north = float(transform[5]) + float(rows.min()) * float(transform[4])
+        south = float(transform[5]) + float(rows.max() + 1) * float(transform[4])
+        if south > north:
+            south, north = north, south
+
+        anomalies.append({
+            "bbox": [west, south, east, north],
+            "area_m2": float(mask.sum()) * pixel_area_m2,
+            "confidence": float(np.mean(region_scores)),
+            "mean_anomaly_score": float(np.mean(region_scores)),
+        })
+
+    return scores, anomalies
+
+
+def anomaly_to_png(
+    scores: FloatArray,
+) -> bytes:
+    """Generate an anomaly score heatmap PNG.
+
+    Green = normal, Yellow = moderate, Red = highly anomalous.
+
+    Args:
+        scores: 2D anomaly score array (0-1, higher = more anomalous)
+
+    Returns:
+        PNG bytes
+    """
+    norm = np.clip(np.nan_to_num(scores, nan=0.0), 0.0, 1.0)
+
+    r = np.clip(norm * 2.0, 0, 1) * 255
+    g = np.clip(2.0 - norm * 2.0, 0, 1) * 255
+    b = np.zeros_like(norm)
+
+    rgb = np.stack([r, g, b], axis=-1).astype(np.uint8)
+    img = Image.fromarray(rgb, mode="RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def compute_feature_detection(
+    elevation: FloatArray,
+    transform: Transform,
+    method: str = "cnn_hillshade",
+) -> tuple[FloatArray, list[dict]]:
+    """Detect terrain features using CNN-inspired multi-angle hillshade analysis.
+
+    Generates hillshades at 8 azimuths, applies Sobel edge filters to each
+    (mimicking CNN convolutional layers), then classifies pixels based on
+    edge consensus, slope, and curvature.
+
+    Feature codes: 0=none, 1=peak, 2=ridge, 3=valley, 4=cliff, 5=saddle, 6=channel.
+
+    Args:
+        elevation: 2D elevation array
+        transform: Affine transform
+        method: Detection method (currently only "cnn_hillshade")
+
+    Returns:
+        Tuple of (feature_map float32 with codes 0-6, list of feature dicts)
+
+    Raises:
+        ValueError: If method is not supported
+    """
+    from ..constants import FEATURE_METHODS
+
+    if method not in FEATURE_METHODS:
+        raise ValueError(f"Invalid feature method '{method}'. Available: {FEATURE_METHODS}")
+
+    from scipy.ndimage import (
+        binary_closing,
+        binary_opening,
+        label,
+        maximum_filter,
+        minimum_filter,
+        sobel,
+    )
+
+    # 1. Generate 8 multi-angle hillshades
+    azimuths = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
+    channels = np.stack(
+        [compute_hillshade(elevation, transform, azimuth=az, altitude=45.0) for az in azimuths],
+        axis=-1,
+    )  # (H, W, 8)
+
+    # 2. Apply Sobel edge detector to each channel
+    edge_magnitudes = np.zeros_like(channels)
+    for i in range(8):
+        sx = sobel(channels[:, :, i], axis=1)
+        sy = sobel(channels[:, :, i], axis=0)
+        edge_magnitudes[:, :, i] = np.sqrt(sx**2 + sy**2)
+
+    # 3. Edge consensus = mean edge magnitude across all angles
+    edge_consensus = np.mean(edge_magnitudes, axis=-1)
+    edge_max = float(np.max(edge_consensus)) if np.max(edge_consensus) > 0 else 1.0
+    edge_norm = edge_consensus / edge_max
+
+    # 4. Compute terrain derivatives
+    slope = compute_slope(elevation, transform, units="degrees")
+    curvature = compute_curvature(elevation, transform)
+    curv_std = max(float(np.nanstd(curvature)), 1e-10)
+
+    # 5. Classify features
+    clean_elev = np.nan_to_num(elevation, nan=0.0).astype(np.float32)
+    result = np.zeros(elevation.shape, dtype=np.uint8)
+
+    # Peak: local max in 5x5 window, moderate slope, positive curvature
+    local_max = maximum_filter(clean_elev, size=5)
+    local_min = minimum_filter(clean_elev, size=5)
+    is_peak = (clean_elev == local_max) & (slope < 15.0) & (curvature > 0.3 * curv_std)
+    result[is_peak] = 1
+
+    # Cliff: very steep slope, high edge consensus
+    is_cliff = (slope > 45.0) & (edge_norm > 0.5)
+    result[(is_cliff) & (result == 0)] = 4
+
+    # Ridge: positive curvature, moderate-high slope, high edge consensus
+    is_ridge = (curvature > 0.5 * curv_std) & (slope > 8.0) & (edge_norm > 0.3) & (result == 0)
+    result[is_ridge] = 2
+
+    # Valley: negative curvature, moderate edge consensus
+    is_valley = (curvature < -0.5 * curv_std) & (slope > 5.0) & (edge_norm > 0.2) & (result == 0)
+    result[is_valley] = 3
+
+    # Channel: narrow valley with steep sides nearby
+    max_slope_nearby = maximum_filter(slope, size=5)
+    is_channel = (
+        (curvature < -0.8 * curv_std)
+        & (max_slope_nearby > 20.0)
+        & (slope < 15.0)
+        & (result == 0)
+    )
+    result[is_channel] = 6
+
+    # Saddle: near-zero curvature, moderate slope, elevation between local extremes
+    elev_range = np.maximum(local_max - local_min, 1.0)
+    elev_mid = (local_max + local_min) / 2.0
+    is_saddle = (
+        (np.abs(curvature) < 0.2 * curv_std)
+        & (slope > 3.0)
+        & (slope < 20.0)
+        & (np.abs(clean_elev - elev_mid) < 0.2 * elev_range)
+        & (result == 0)
+    )
+    result[is_saddle] = 5
+
+    # 6. Morphological cleanup
+    for cls in range(1, 7):
+        mask = result == cls
+        if np.any(mask):
+            cleaned = binary_opening(mask, iterations=1)
+            cleaned = binary_closing(cleaned, iterations=1)
+            result[result == cls] = 0
+            result[cleaned] = cls
+
+    # 7. Label connected regions and compute stats
+    feature_mask = result > 0
+    labelled, num_regions = label(feature_mask)
+
+    cellsize_x = abs(float(transform[0]))
+    cellsize_y = abs(float(transform[4]))
+    mid_row = elevation.shape[0] // 2
+    mid_lat_deg = float(transform[5]) + mid_row * float(transform[4])
+    pixel_area_m2 = (
+        cellsize_x * 111320.0 * math.cos(math.radians(mid_lat_deg)) * cellsize_y * 111320.0
+    )
+
+    feature_names = {1: "peak", 2: "ridge", 3: "valley", 4: "cliff", 5: "saddle", 6: "channel"}
+    features_list: list[dict] = []
+
+    for region_id in range(1, num_regions + 1):
+        mask = labelled == region_id
+        region_classes = result[mask]
+        dominant_cls = int(np.bincount(region_classes).argmax())
+        if dominant_cls == 0:
+            continue
+
+        rows, cols = np.where(mask)
+        west = float(transform[2]) + float(cols.min()) * cellsize_x
+        east = float(transform[2]) + float(cols.max() + 1) * cellsize_x
+        north = float(transform[5]) + float(rows.min()) * float(transform[4])
+        south = float(transform[5]) + float(rows.max() + 1) * float(transform[4])
+        if south > north:
+            south, north = north, south
+
+        region_edges = edge_consensus[mask]
+        confidence = float(np.clip(np.mean(region_edges) / edge_max, 0.0, 1.0))
+
+        features_list.append({
+            "bbox": [west, south, east, north],
+            "area_m2": float(mask.sum()) * pixel_area_m2,
+            "feature_type": feature_names.get(dominant_cls, "unknown"),
+            "confidence": round(confidence, 3),
+        })
+
+    return result.astype(np.float32), features_list
+
+
+# Feature class colours: index -> (R, G, B)
+_FEATURE_COLOURS = np.array(
+    [
+        [220, 220, 220],  # 0: none - light grey
+        [255, 0, 0],  # 1: peak - red
+        [139, 90, 43],  # 2: ridge - brown
+        [34, 139, 34],  # 3: valley - forest green
+        [255, 140, 0],  # 4: cliff - dark orange
+        [255, 215, 0],  # 5: saddle - gold
+        [70, 130, 180],  # 6: channel - steel blue
+    ],
+    dtype=np.uint8,
+)
+
+
+def feature_to_png(
+    features: FloatArray,
+) -> bytes:
+    """Generate a feature detection PNG with categorical colours.
+
+    Args:
+        features: 2D feature class array (0-6, float but integer-valued)
+
+    Returns:
+        PNG bytes
+    """
+    idx = np.clip(features.astype(np.intp), 0, len(_FEATURE_COLOURS) - 1)
+    rgb = _FEATURE_COLOURS[idx]
+    img = Image.fromarray(rgb, mode="RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 

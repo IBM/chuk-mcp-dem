@@ -6,12 +6,11 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Tests: 1006 passed](https://img.shields.io/badge/tests-1006%20passed-brightgreen.svg)]()
-[![Coverage: 95%](https://img.shields.io/badge/coverage-95%25-brightgreen.svg)]()
+[![Tests: 1167 passed](https://img.shields.io/badge/tests-1167%20passed-brightgreen.svg)]()
 
 ## Features
 
-This MCP server provides access to global elevation data through 6 DEM sources via 18 tools.
+This MCP server provides access to global elevation data through 6 DEM sources via 22 tools.
 
 **All tools return fully-typed Pydantic v2 models** for type safety, validation, and excellent IDE support. All tools support `output_mode="text"` for human-readable output alongside the default JSON.
 
@@ -143,6 +142,35 @@ Compute visible area from an observer point:
 - Configurable observer height and radius (up to 50 km)
 - Returns visibility percentage and raster artifact
 
+### ML-Enhanced Analysis Tools
+
+Tier 2 tools that *recognise* terrain features using existing terrain derivatives as input. Install with `pip install chuk-mcp-dem[ml]` for Isolation Forest support.
+
+#### 19. Landform Classification (`dem_classify_landforms`)
+Classify terrain into geomorphological types:
+- 9 landform classes: plain, ridge, valley, plateau, escarpment, depression, saddle, terrace, alluvial fan
+- Rule-based classification using slope, curvature, and TRI thresholds
+- Returns dominant landform and class distribution percentages
+
+#### 20. Anomaly Detection (`dem_detect_anomalies`)
+Detect terrain anomalies using Isolation Forest:
+- Stacks slope, curvature, TRI, and roughness into feature vectors
+- scikit-learn Isolation Forest identifies outlier terrain
+- Returns anomaly score map and labelled anomaly regions with confidence
+
+#### 21. Temporal Change (`dem_compare_temporal`)
+Compute elevation change between two DEM sources:
+- Pixel-aligned subtraction with significance thresholding
+- Volume gained/lost calculation in cubic metres
+- Labelled change regions with mean/max change and gain/loss type
+
+#### 22. Feature Detection (`dem_detect_features`)
+CNN-inspired geomorphological feature detection:
+- Multi-angle hillshade (8 azimuths) with Sobel edge filters
+- Classifies pixels into peak, ridge, valley, cliff, saddle, channel
+- Morphological cleanup and connected component labelling
+- No torch required -- uses scipy convolutional filters only
+
 ## Installation
 
 ### Using uv (Recommended)
@@ -233,6 +261,10 @@ Once configured, you can ask Claude questions like:
 - "What's the slope along the trail from A to B?"
 - "Show me what's visible from this viewpoint within 5 km"
 - "Compute watershed flow accumulation for this mountain area"
+- "Classify the landforms in this bounding box"
+- "Detect terrain anomalies near Hoover Dam"
+- "Compare elevation between GLO-90 and GLO-30 for Mount St. Helens"
+- "Detect geomorphological features in the Grand Canyon"
 
 ## Tool Reference
 
@@ -258,6 +290,10 @@ All tools accept an optional `output_mode` parameter (`"json"` default, or `"tex
 | `dem_watershed` | Flow accumulation analysis | `bbox`, `source`, `output_format` |
 | `dem_profile` | Elevation cross-section | `start`, `end`, `num_points` |
 | `dem_viewshed` | Visibility analysis | `observer`, `radius_m`, `observer_height_m` |
+| `dem_classify_landforms` | Landform classification | `bbox`, `source`, `method` |
+| `dem_detect_anomalies` | Anomaly detection (Isolation Forest) | `bbox`, `source`, `sensitivity` |
+| `dem_compare_temporal` | Elevation change detection | `bbox`, `before_source`, `after_source` |
+| `dem_detect_features` | Feature detection (CNN-inspired) | `bbox`, `source`, `method` |
 
 ### dem_fetch
 
@@ -322,7 +358,7 @@ server.py                         # CLI entry point (sync)
   +-- async_server.py             # Async server setup, tool registration
        +-- tools/discovery/       # list_sources, describe, status, capabilities
        +-- tools/download/        # fetch, fetch_point, fetch_points, coverage, size
-       +-- tools/analysis/        # hillshade, slope, aspect, curvature, tri, contour, watershed, profile, viewshed
+       +-- tools/analysis/        # hillshade, slope, aspect, curvature, tri, contour, watershed, profile, viewshed, landforms, anomalies, temporal, features
        +-- core/dem_manager.py    # Cache, URL construction, download pipeline
             +-- core/raster_io.py # COG read, merge, sample, terrain, PNG
 ```
@@ -365,8 +401,8 @@ pip install -e ".[dev]"
 ### Running Tests
 
 ```bash
-make test              # Run 1006 tests
-make test-cov          # Run tests with coverage (95%)
+make test              # Run 1167 tests
+make test-cov          # Run tests with coverage
 make coverage-report   # Show coverage report
 ```
 

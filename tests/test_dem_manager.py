@@ -15,12 +15,16 @@ from chuk_mcp_dem.constants import (
 )
 from chuk_mcp_dem.core.dem_manager import (
     DEMManager,
+    FeatureResult,
     FetchResult,
     MultiPointResult,
     PointResult,
     ProfileResult,
     TerrainResult,
     ViewshedResult,
+    TemporalChangeResult,
+    LandformResult,
+    AnomalyResult,
 )
 
 
@@ -1633,3 +1637,465 @@ class TestFetchViewshed:
             )
 
         assert result.visible_percentage == pytest.approx(100.0)
+
+
+# ===================================================================
+# Phase 3: Temporal Change, Landforms, Anomalies, Features
+# ===================================================================
+
+
+class TestFetchTemporalChange:
+    """Tests for DEMManager.fetch_temporal_change()."""
+
+    async def test_fetch_temporal_change_success(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        change_arr = np.ones((100, 100), dtype=np.float32) * 2.0
+        regions = [
+            {
+                "bbox": [7.0, 46.0, 8.0, 47.0],
+                "area_m2": 1000.0,
+                "mean_change_m": 2.0,
+                "max_change_m": 2.0,
+                "change_type": "gain",
+            }
+        ]
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.fill_voids",
+                return_value=sample_elevation,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_elevation_change",
+                return_value=(change_arr, regions),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.change_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_temporal_change(
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                before_source="srtm",
+                after_source="cop30",
+            )
+
+        assert isinstance(result, TemporalChangeResult)
+        assert result.artifact_ref.startswith("dem/")
+        assert result.crs == str(sample_crs)
+        assert result.resolution_m == 30  # SRTM resolution
+        assert result.dtype == "float32"
+        assert result.significance_threshold_m == 1.0
+        assert len(result.significant_regions) == 1
+
+    async def test_fetch_temporal_change_invalid_before_source(self, mock_manager):
+        with pytest.raises(ValueError, match="Unknown DEM source"):
+            await mock_manager.fetch_temporal_change(
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                before_source="bad",
+                after_source="cop30",
+            )
+
+    async def test_fetch_temporal_change_invalid_after_source(self, mock_manager):
+        with pytest.raises(ValueError, match="Unknown DEM source"):
+            await mock_manager.fetch_temporal_change(
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                before_source="srtm",
+                after_source="bad",
+            )
+
+    async def test_fetch_temporal_change_no_coverage_before(self, mock_manager):
+        """Before source with no tile URL constructor raises."""
+        with pytest.raises(ValueError, match="does not cover"):
+            await mock_manager.fetch_temporal_change(
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                before_source="aster",
+                after_source="cop30",
+            )
+
+    async def test_fetch_temporal_change_png_output(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        change_arr = np.ones((100, 100), dtype=np.float32) * 0.5
+        regions = []
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.fill_voids",
+                return_value=sample_elevation,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_elevation_change",
+                return_value=(change_arr, regions),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.change_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_temporal_change(
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                before_source="srtm",
+                after_source="cop30",
+                output_format="png",
+            )
+
+        assert isinstance(result, TemporalChangeResult)
+        assert result.artifact_ref.startswith("dem/")
+
+
+class TestFetchLandforms:
+    """Tests for DEMManager.fetch_landforms()."""
+
+    async def test_fetch_landforms_success(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        landform_arr = np.zeros((100, 100), dtype=np.uint8)
+        landform_arr[0:50, :] = 3  # plateau
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.fill_voids",
+                return_value=sample_elevation,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_landforms",
+                return_value=landform_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.landform_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_landforms(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30"
+            )
+
+        assert isinstance(result, LandformResult)
+        assert result.artifact_ref.startswith("dem/")
+        assert result.crs == str(sample_crs)
+        assert result.resolution_m == 30
+        assert result.dtype == "uint8"
+        assert "plain" in result.class_distribution
+        assert "plateau" in result.class_distribution
+        assert result.dominant_landform in ("plain", "plateau")
+
+    async def test_fetch_landforms_invalid_source(self, mock_manager):
+        with pytest.raises(ValueError, match="Unknown DEM source"):
+            await mock_manager.fetch_landforms(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="bad"
+            )
+
+    async def test_fetch_landforms_no_coverage(self, mock_manager):
+        """Source with no tile URL constructor raises."""
+        with pytest.raises(ValueError, match="does not cover"):
+            await mock_manager.fetch_landforms(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="aster"
+            )
+
+    async def test_fetch_landforms_png_output(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        landform_arr = np.zeros((100, 100), dtype=np.uint8)
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.fill_voids",
+                return_value=sample_elevation,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_landforms",
+                return_value=landform_arr,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.landform_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_landforms(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30", output_format="png"
+            )
+
+        assert isinstance(result, LandformResult)
+        assert result.artifact_ref.startswith("dem/")
+
+
+class TestFetchAnomalies:
+    """Tests for DEMManager.fetch_anomalies()."""
+
+    async def test_fetch_anomalies_success(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        scores_arr = np.random.uniform(0, 1, (100, 100)).astype(np.float32)
+        anomalies = [
+            {
+                "bbox": [7.0, 46.0, 7.5, 46.5],
+                "area_m2": 500.0,
+                "confidence": 0.8,
+                "mean_anomaly_score": 0.75,
+            }
+        ]
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.fill_voids",
+                return_value=sample_elevation,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_anomaly_scores",
+                return_value=(scores_arr, anomalies),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.anomaly_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_anomalies(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30"
+            )
+
+        assert isinstance(result, AnomalyResult)
+        assert result.artifact_ref.startswith("dem/")
+        assert result.crs == str(sample_crs)
+        assert result.resolution_m == 30
+        assert result.anomaly_count == 1
+        assert len(result.anomalies) == 1
+        assert result.dtype == "float32"
+
+    async def test_fetch_anomalies_invalid_source(self, mock_manager):
+        with pytest.raises(ValueError, match="Unknown DEM source"):
+            await mock_manager.fetch_anomalies(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="bad"
+            )
+
+    async def test_fetch_anomalies_no_coverage(self, mock_manager):
+        """Source with no tile URL constructor raises."""
+        with pytest.raises(ValueError, match="does not cover"):
+            await mock_manager.fetch_anomalies(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="aster"
+            )
+
+    async def test_fetch_anomalies_png_output(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        scores_arr = np.random.uniform(0, 1, (100, 100)).astype(np.float32)
+        anomalies = []
+
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.fill_voids",
+                return_value=sample_elevation,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_anomaly_scores",
+                return_value=(scores_arr, anomalies),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.anomaly_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_anomalies(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30", output_format="png"
+            )
+
+        assert isinstance(result, AnomalyResult)
+        assert result.artifact_ref.startswith("dem/")
+
+
+class TestFetchFeatures:
+    """Tests for DEMManager.fetch_features()."""
+
+    async def test_fetch_features_success(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.fill_voids",
+                return_value=sample_elevation,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_feature_detection",
+                return_value=(
+                    np.zeros(sample_elevation.shape, dtype=np.float32),
+                    [{"bbox": [7, 46, 8, 47], "area_m2": 100.0, "feature_type": "ridge", "confidence": 0.5}],
+                ),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.arrays_to_geotiff",
+                return_value=b"fake-tiff",
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.feature_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_features(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30"
+            )
+            assert result.artifact_ref
+            assert result.crs == str(sample_crs)
+            assert result.resolution_m == 30
+            assert result.feature_count == 1
+            assert result.feature_summary == {"ridge": 1}
+            assert len(result.features) == 1
+            assert result.dtype == "float32"
+
+    async def test_fetch_features_png_output(
+        self, mock_manager, sample_elevation, sample_crs, sample_transform
+    ):
+        with (
+            patch(
+                "chuk_mcp_dem.core.raster_io.read_and_merge_tiles",
+                return_value=(sample_elevation, sample_crs, sample_transform),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.fill_voids",
+                return_value=sample_elevation,
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.compute_feature_detection",
+                return_value=(
+                    np.zeros(sample_elevation.shape, dtype=np.float32),
+                    [],
+                ),
+            ),
+            patch(
+                "chuk_mcp_dem.core.raster_io.feature_to_png",
+                return_value=b"fake-png",
+            ),
+        ):
+            result = await mock_manager.fetch_features(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30", output_format="png"
+            )
+            assert result.artifact_ref
+            assert result.preview_ref is None  # No separate preview for png output
+
+    async def test_fetch_features_invalid_source(self, mock_manager):
+        with pytest.raises(ValueError, match="Unknown DEM source"):
+            await mock_manager.fetch_features(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="bad"
+            )
+
+    async def test_fetch_features_no_coverage(self, mock_manager):
+        """Source with no tile URL constructor raises."""
+        with pytest.raises(ValueError, match="does not cover"):
+            await mock_manager.fetch_features(
+                bbox=[7.0, 46.0, 8.0, 47.0], source="aster"
+            )
+
+
+# ===================================================================
+# Phase 3: Dataclass tests
+# ===================================================================
+
+
+class TestPhase3Dataclasses:
+    """Tests for Phase 3 result dataclasses."""
+
+    def test_temporal_change_result_fields(self):
+        result = TemporalChangeResult(
+            artifact_ref="dem/change.tif",
+            preview_ref="dem/change.png",
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            significance_threshold_m=1.0,
+            volume_gained_m3=5000.0,
+            volume_lost_m3=3000.0,
+            significant_regions=[],
+            dtype="float32",
+        )
+        assert result.artifact_ref == "dem/change.tif"
+        assert result.volume_gained_m3 == 5000.0
+        assert result.volume_lost_m3 == 3000.0
+
+    def test_landform_result_fields(self):
+        result = LandformResult(
+            artifact_ref="dem/landforms.tif",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            class_distribution={"plain": 80.0, "ridge": 20.0},
+            dominant_landform="plain",
+            dtype="uint8",
+        )
+        assert result.artifact_ref == "dem/landforms.tif"
+        assert result.dominant_landform == "plain"
+        assert result.preview_ref is None
+
+    def test_anomaly_result_fields(self):
+        result = AnomalyResult(
+            artifact_ref="dem/anomalies.tif",
+            preview_ref="dem/anomalies.png",
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            anomaly_count=5,
+            anomalies=[],
+            dtype="float32",
+        )
+        assert result.artifact_ref == "dem/anomalies.tif"
+        assert result.anomaly_count == 5
+        assert result.preview_ref == "dem/anomalies.png"
+
+    def test_feature_result(self):
+        r = FeatureResult(
+            artifact_ref="abc",
+            preview_ref=None,
+            crs="EPSG:4326",
+            resolution_m=30.0,
+            shape=[100, 100],
+            feature_count=5,
+            feature_summary={"ridge": 3, "peak": 2},
+            features=[],
+            dtype="float32",
+        )
+        assert r.feature_count == 5
+        assert r.feature_summary == {"ridge": 3, "peak": 2}

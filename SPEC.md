@@ -7,12 +7,12 @@ Version 0.1.0
 chuk-mcp-dem is an MCP (Model Context Protocol) server that provides digital
 elevation model (DEM) discovery, retrieval, and terrain analysis.
 
-- **18 tools** for discovering DEM sources, fetching elevation data, computing terrain derivatives, and generating profiles/viewsheds
+- **22 tools** for discovering DEM sources, fetching elevation data, computing terrain derivatives, generating profiles/viewsheds, and ML-enhanced terrain analysis
 - **Dual output mode** -- all tools return JSON (default) or human-readable text via `output_mode` parameter
 - **Async-first** -- tool entry points are async; sync rasterio I/O runs in thread pools
 - **Pluggable storage** -- raster data stored via chuk-artifacts (memory, filesystem, S3)
 
-All 18 tools are implemented: discovery (4), download (5), terrain analysis (7), and profile/viewshed (2).
+All 22 tools are implemented: discovery (4), download (5), terrain analysis (7), profile/viewshed (2), and ML-enhanced analysis (4).
 
 ---
 
@@ -503,6 +503,151 @@ Compute visible area from an observer point.
 
 ---
 
+### ML-Enhanced Analysis Tools
+
+#### `dem_classify_landforms`
+
+Classify terrain into geomorphological landform types using slope, curvature, and TRI thresholds.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `bbox` | `float[4]` | *required* | Bounding box `[west, south, east, north]` |
+| `source` | `str?` | `cop30` | DEM source identifier |
+| `method` | `str` | `rule_based` | Classification method: `rule_based` |
+| `output_format` | `str` | `geotiff` | Output format: `geotiff` or `png` |
+
+**Response:** `LandformResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | `str` | DEM source used |
+| `bbox` | `float[]` | Bounding box |
+| `artifact_ref` | `str` | Artifact store reference |
+| `preview_ref` | `str?` | PNG preview reference |
+| `crs` | `str` | Output CRS |
+| `resolution_m` | `float` | Resolution in metres |
+| `shape` | `int[]` | Array shape [height, width] |
+| `dominant_landform` | `str` | Most common landform class |
+| `class_distribution` | `dict` | Percentage of each landform class |
+| `output_format` | `str` | Output format used |
+| `license_warning` | `str?` | License restriction warning |
+| `message` | `str` | Result message |
+
+Landform classes: plain (0), ridge (1), valley (2), plateau (3), escarpment (4), depression (5), saddle (6), terrace (7), alluvial_fan (8).
+
+---
+
+#### `dem_detect_anomalies`
+
+Detect terrain anomalies using Isolation Forest on terrain feature vectors (slope, curvature, TRI, roughness). Requires `pip install chuk-mcp-dem[ml]` for scikit-learn.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `bbox` | `float[4]` | *required* | Bounding box `[west, south, east, north]` |
+| `source` | `str?` | `cop30` | DEM source identifier |
+| `sensitivity` | `float` | `0.1` | Isolation Forest contamination parameter (0.0-1.0) |
+| `output_format` | `str` | `geotiff` | Output format: `geotiff` or `png` |
+
+**Response:** `AnomalyDetectionResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | `str` | DEM source used |
+| `bbox` | `float[]` | Bounding box |
+| `artifact_ref` | `str` | Artifact store reference |
+| `preview_ref` | `str?` | PNG preview reference |
+| `crs` | `str` | Output CRS |
+| `resolution_m` | `float` | Resolution in metres |
+| `shape` | `int[]` | Array shape [height, width] |
+| `anomaly_count` | `int` | Number of anomaly regions detected |
+| `anomalies` | `TerrainAnomaly[]` | Anomaly region details |
+| `output_format` | `str` | Output format used |
+| `license_warning` | `str?` | License restriction warning |
+| `message` | `str` | Result message |
+
+TerrainAnomaly fields: `bbox`, `area_m2`, `confidence`, `mean_anomaly_score`.
+
+---
+
+#### `dem_compare_temporal`
+
+Compute elevation change between two DEM sources by pixel subtraction with significance thresholding and change region detection.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `bbox` | `float[4]` | *required* | Bounding box `[west, south, east, north]` |
+| `before_source` | `str` | *required* | Earlier DEM source (e.g. `cop90`) |
+| `after_source` | `str` | *required* | Later DEM source (e.g. `cop30`) |
+| `significance_threshold_m` | `float` | `1.0` | Minimum change in metres to flag as significant |
+| `output_format` | `str` | `geotiff` | Output format: `geotiff` or `png` |
+
+**Response:** `TemporalChangeResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `before_source` | `str` | Earlier DEM source |
+| `after_source` | `str` | Later DEM source |
+| `bbox` | `float[]` | Bounding box |
+| `artifact_ref` | `str` | Artifact store reference |
+| `preview_ref` | `str?` | PNG preview reference |
+| `crs` | `str` | Output CRS |
+| `resolution_m` | `float` | Resolution in metres |
+| `shape` | `int[]` | Array shape [height, width] |
+| `volume_gained_m3` | `float` | Total volume gain in cubic metres |
+| `volume_lost_m3` | `float` | Total volume loss in cubic metres |
+| `significant_regions` | `ChangeRegion[]` | Significant change regions |
+| `output_format` | `str` | Output format used |
+| `message` | `str` | Result message |
+
+ChangeRegion fields: `bbox`, `area_m2`, `mean_change_m`, `max_change_m`, `change_type` (gain/loss).
+
+---
+
+#### `dem_detect_features`
+
+Detect geomorphological features using CNN-inspired multi-angle hillshade with Sobel edge filters. Classifies pixels into: peak, ridge, valley, cliff, saddle, channel.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `bbox` | `float[4]` | *required* | Bounding box `[west, south, east, north]` |
+| `source` | `str?` | `cop30` | DEM source identifier |
+| `method` | `str` | `cnn_hillshade` | Feature detection method |
+| `output_format` | `str` | `geotiff` | Output format: `geotiff` or `png` |
+
+**Response:** `FeatureDetectionResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | `str` | DEM source used |
+| `bbox` | `float[]` | Bounding box |
+| `artifact_ref` | `str` | Artifact store reference |
+| `preview_ref` | `str?` | PNG preview reference |
+| `crs` | `str` | Output CRS |
+| `resolution_m` | `float` | Resolution in metres |
+| `shape` | `int[]` | Array shape [height, width] |
+| `feature_count` | `int` | Number of feature regions detected |
+| `feature_summary` | `dict` | Count per feature type |
+| `features` | `TerrainFeature[]` | Feature region details |
+| `output_format` | `str` | Output format used |
+| `license_warning` | `str?` | License restriction warning |
+| `message` | `str` | Result message |
+
+Feature classes: none (0), peak (1), ridge (2), valley (3), cliff (4), saddle (5), channel (6).
+
+TerrainFeature fields: `bbox`, `area_m2`, `feature_type`, `confidence`.
+
+**Algorithm:** Generates 8 hillshades at azimuths [0, 45, 90, 135, 180, 225, 270, 315], applies Sobel edge filter to each channel, computes edge consensus (mean across angles), then classifies pixels using slope, curvature, and edge thresholds. Morphological cleanup with binary opening/closing, followed by connected component labelling for region statistics.
+
+---
+
 ## Build Phases
 
 | Phase | Version | Tools | Focus |
@@ -512,6 +657,8 @@ Compute visible area from an observer point.
 | **1.2** | v0.3.0 | +2 tools | Advanced: profile, viewshed |
 | **1.2+2.0** | v0.4.0 | +1 tool | Contour lines + SRTM/3DEP/FABDEM download integration |
 | **2.1** | v0.5.0 | +1 tool | Watershed analysis + FABDEM license warnings |
+| **2.2** | v0.5.1 | -- | LLM input normalization for `dem_fetch_points` |
+| **3.0** | v0.6.0 | +4 tools | ML-enhanced analysis: landforms, anomalies, temporal change, feature detection |
 
 ---
 

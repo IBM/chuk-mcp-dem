@@ -203,7 +203,9 @@ DEFAULT_WINDOW_SIZE = 3
 
 # Terrain derivatives (available analysis types)
 TERRAIN_DERIVATIVES = ["hillshade", "slope", "aspect", "curvature", "tri", "contour", "watershed"]
-ANALYSIS_TOOLS = ["profile", "viewshed"]
+ANALYSIS_TOOLS = [
+    "profile", "viewshed", "temporal_change", "landforms", "anomalies", "features",
+]
 OUTPUT_FORMATS = ["geotiff", "png"]
 SLOPE_UNITS = ["degrees", "percent"]
 
@@ -214,6 +216,23 @@ DEFAULT_CONTOUR_INTERVAL_M = 100.0
 DEFAULT_NUM_POINTS = 100
 DEFAULT_OBSERVER_HEIGHT_M = 1.8
 MAX_VIEWSHED_RADIUS_M = 50000.0  # 50 km max radius
+
+# Temporal change defaults
+DEFAULT_SIGNIFICANCE_THRESHOLD_M = 1.0
+
+# Landform classification
+LANDFORM_CLASSES = [
+    "plain", "ridge", "valley", "plateau", "escarpment",
+    "depression", "saddle", "terrace", "alluvial_fan",
+]
+LANDFORM_METHODS = ["rule_based"]
+
+# Feature detection
+FEATURE_CLASSES = ["none", "peak", "ridge", "valley", "cliff", "saddle", "channel"]
+FEATURE_METHODS = ["cnn_hillshade"]
+
+# Anomaly detection defaults
+DEFAULT_ANOMALY_SENSITIVITY = 0.1  # Isolation Forest contamination parameter
 
 # Cache & retry
 TILE_CACHE_MAX_BYTES = 100 * 1024 * 1024  # 100 MB total
@@ -261,6 +280,18 @@ class ErrorMessages:
     RADIUS_TOO_LARGE = "radius_m ({:.0f}) exceeds maximum ({:.0f})"
     INVALID_CONTOUR_INTERVAL = "interval_m must be > 0, got {}"
     SOURCE_NOT_DOWNLOADABLE = "{} does not support direct download (authentication required)"
+    INVALID_SENSITIVITY = "sensitivity must be between 0 and 1, got {}"
+    INVALID_LANDFORM_METHOD = "Invalid landform method '{}'. Available: {}"
+    INVALID_FEATURE_METHOD = "Invalid feature method '{}'. Available: {}"
+    SKLEARN_NOT_AVAILABLE = (
+        "scikit-learn is required for anomaly detection. "
+        "Install with: pip install chuk-mcp-dem[ml]"
+    )
+    FEATURE_DETECTION_NOT_AVAILABLE = (
+        "CNN feature detection is not yet available. "
+        "Trained models are required but not yet released. "
+        "Multi-angle hillshade generation is functional."
+    )
 
 
 class SuccessMessages:
@@ -282,3 +313,9 @@ class SuccessMessages:
     PROFILE_COMPLETE = "Profile extracted: {} points over {:.1f}m"
     VIEWSHED_COMPLETE = "Viewshed computed: {:.1f}% visible within {:.0f}m radius"
     WATERSHED_COMPLETE = "Watershed computed ({} shape, max accumulation {:.0f} cells)"
+    TEMPORAL_CHANGE_COMPLETE = (
+        "Elevation change computed ({} shape, {:.1f} m³ gained, {:.1f} m³ lost)"
+    )
+    LANDFORM_COMPLETE = "Landforms classified ({} shape, dominant: {})"
+    ANOMALY_COMPLETE = "Anomaly detection complete ({} shape, {} anomalies found)"
+    FEATURE_DETECT_COMPLETE = "Feature detection complete ({} shape, {} features found)"

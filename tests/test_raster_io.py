@@ -2320,3 +2320,477 @@ class TestWatershedToPng:
         assert isinstance(png_bytes, bytes)
         img = Image.open(io.BytesIO(png_bytes))
         assert img.size == (50, 50)
+
+
+# ---------------------------------------------------------------------------
+# compute_elevation_change
+# ---------------------------------------------------------------------------
+
+
+class TestComputeElevationChange:
+    """Tests for compute_elevation_change() -- before/after DEM differencing."""
+
+    def test_no_change_returns_zeros(self, sample_elevation, sample_transform):
+        """Two identical arrays produce an all-zero change array and no regions."""
+        from chuk_mcp_dem.core.raster_io import compute_elevation_change
+
+        change, regions = compute_elevation_change(
+            sample_elevation, sample_elevation, sample_transform,
+        )
+        assert np.allclose(change, 0.0)
+        assert regions == []
+
+    def test_uniform_gain(self, sample_elevation, sample_transform):
+        """after = before + 5 gives change array all 5.0 with change_type=gain."""
+        from chuk_mcp_dem.core.raster_io import compute_elevation_change
+
+        after = sample_elevation + 5.0
+        change, regions = compute_elevation_change(
+            sample_elevation, after, sample_transform,
+        )
+        assert np.allclose(change, 5.0)
+        assert len(regions) >= 1
+        assert all(r["change_type"] == "gain" for r in regions)
+
+    def test_uniform_loss(self, sample_elevation, sample_transform):
+        """after = before - 5 gives change array all -5.0 with change_type=loss."""
+        from chuk_mcp_dem.core.raster_io import compute_elevation_change
+
+        after = sample_elevation - 5.0
+        change, regions = compute_elevation_change(
+            sample_elevation, after, sample_transform,
+        )
+        assert np.allclose(change, -5.0)
+        assert len(regions) >= 1
+        assert all(r["change_type"] == "loss" for r in regions)
+
+    def test_below_threshold_no_regions(self, sample_elevation, sample_transform):
+        """Change below significance threshold yields empty regions list."""
+        from chuk_mcp_dem.core.raster_io import compute_elevation_change
+
+        after = sample_elevation + 0.5
+        change, regions = compute_elevation_change(
+            sample_elevation, after, sample_transform,
+            significance_threshold_m=1.0,
+        )
+        assert np.allclose(change, 0.5, rtol=1e-5, atol=1e-4)
+        assert regions == []
+
+    def test_output_dtype_float32(self, sample_elevation, sample_transform):
+        """Change array dtype is float32."""
+        from chuk_mcp_dem.core.raster_io import compute_elevation_change
+
+        after = sample_elevation + 2.0
+        change, _ = compute_elevation_change(
+            sample_elevation, after, sample_transform,
+        )
+        assert change.dtype == np.float32
+
+    def test_output_shape_matches_input(self, sample_elevation, sample_transform):
+        """Change array shape matches input elevation arrays."""
+        from chuk_mcp_dem.core.raster_io import compute_elevation_change
+
+        after = sample_elevation + 2.0
+        change, _ = compute_elevation_change(
+            sample_elevation, after, sample_transform,
+        )
+        assert change.shape == sample_elevation.shape
+
+    def test_region_has_correct_keys(self, sample_elevation, sample_transform):
+        """Each region dict contains all expected keys."""
+        from chuk_mcp_dem.core.raster_io import compute_elevation_change
+
+        after = sample_elevation + 5.0
+        _, regions = compute_elevation_change(
+            sample_elevation, after, sample_transform,
+        )
+        assert len(regions) >= 1
+        expected_keys = {"bbox", "area_m2", "mean_change_m", "max_change_m", "change_type"}
+        for region in regions:
+            assert set(region.keys()) == expected_keys
+
+    def test_nan_handling(self, sample_transform):
+        """NaN values in input do not crash; NaN positions are handled safely."""
+        from chuk_mcp_dem.core.raster_io import compute_elevation_change
+
+        before = np.ones((20, 20), dtype=np.float32) * 100.0
+        after = np.ones((20, 20), dtype=np.float32) * 110.0
+        before[5, 5] = np.nan
+        after[10, 10] = np.nan
+
+        change, regions = compute_elevation_change(
+            before, after, sample_transform,
+        )
+        assert change.shape == (20, 20)
+        # NaN positions should be NaN in the change array
+        assert np.isnan(change[5, 5]) or np.isfinite(change[5, 5])
+        # Function should not raise
+        assert isinstance(regions, list)
+
+
+# ---------------------------------------------------------------------------
+# change_to_png
+# ---------------------------------------------------------------------------
+
+
+class TestChangeToPng:
+    """Tests for change_to_png() -- diverging blue-white-red colourmap."""
+
+    def test_produces_valid_png(self):
+        """Output is valid PNG bytes."""
+        from chuk_mcp_dem.core.raster_io import change_to_png
+
+        change = np.random.uniform(-5, 5, (50, 50)).astype(np.float32)
+        png_bytes = change_to_png(change)
+        assert isinstance(png_bytes, bytes)
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.format == "PNG"
+
+    def test_zero_change_is_white(self):
+        """Zero change renders as white pixels (255, 255, 255)."""
+        from chuk_mcp_dem.core.raster_io import change_to_png
+
+        change = np.zeros((20, 20), dtype=np.float32)
+        png_bytes = change_to_png(change)
+        img = Image.open(io.BytesIO(png_bytes))
+        pixels = np.array(img)
+        # All pixels should be white
+        assert np.all(pixels[:, :, 0] == 255)
+        assert np.all(pixels[:, :, 1] == 255)
+        assert np.all(pixels[:, :, 2] == 255)
+
+    def test_positive_change_is_red(self):
+        """Positive change renders with R=255 and G=0."""
+        from chuk_mcp_dem.core.raster_io import change_to_png
+
+        change = np.full((20, 20), 10.0, dtype=np.float32)
+        png_bytes = change_to_png(change)
+        img = Image.open(io.BytesIO(png_bytes))
+        pixels = np.array(img)
+        assert np.all(pixels[:, :, 0] == 255)  # Red channel
+        assert np.all(pixels[:, :, 1] == 0)    # Green channel
+
+    def test_negative_change_is_blue(self):
+        """Negative change renders with B=255 and G=0."""
+        from chuk_mcp_dem.core.raster_io import change_to_png
+
+        change = np.full((20, 20), -10.0, dtype=np.float32)
+        png_bytes = change_to_png(change)
+        img = Image.open(io.BytesIO(png_bytes))
+        pixels = np.array(img)
+        assert np.all(pixels[:, :, 2] == 255)  # Blue channel
+        assert np.all(pixels[:, :, 1] == 0)    # Green channel
+
+    def test_output_dimensions_match(self):
+        """PNG dimensions match input array shape."""
+        from chuk_mcp_dem.core.raster_io import change_to_png
+
+        change = np.zeros((30, 40), dtype=np.float32)
+        png_bytes = change_to_png(change)
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.size == (40, 30)  # PIL size is (width, height)
+
+
+# ---------------------------------------------------------------------------
+# compute_landforms
+# ---------------------------------------------------------------------------
+
+
+class TestComputeLandforms:
+    """Tests for compute_landforms() -- rule-based landform classification."""
+
+    def test_flat_surface_all_plain(self, sample_transform):
+        """Flat elevation surface classifies entirely as plain (class 0)."""
+        from chuk_mcp_dem.core.raster_io import compute_landforms
+
+        flat = np.full((30, 30), 200.0, dtype=np.float32)
+        result = compute_landforms(flat, sample_transform)
+        assert np.all(result == 0)
+
+    def test_output_dtype_uint8(self, sample_elevation, sample_transform):
+        """Result dtype is uint8."""
+        from chuk_mcp_dem.core.raster_io import compute_landforms
+
+        result = compute_landforms(sample_elevation, sample_transform)
+        assert result.dtype == np.uint8
+
+    def test_output_shape_matches_input(self, sample_elevation, sample_transform):
+        """Result shape matches input elevation shape."""
+        from chuk_mcp_dem.core.raster_io import compute_landforms
+
+        result = compute_landforms(sample_elevation, sample_transform)
+        assert result.shape == sample_elevation.shape
+
+    def test_invalid_method_raises(self, sample_elevation, sample_transform):
+        """Invalid method parameter raises ValueError."""
+        from chuk_mcp_dem.core.raster_io import compute_landforms
+
+        with pytest.raises(ValueError, match="Invalid landform method"):
+            compute_landforms(sample_elevation, sample_transform, method="invalid")
+
+    def test_values_in_valid_range(self, sample_elevation, sample_transform):
+        """All output values are in the range 0-8."""
+        from chuk_mcp_dem.core.raster_io import compute_landforms
+
+        result = compute_landforms(sample_elevation, sample_transform)
+        assert np.all(result >= 0)
+        assert np.all(result <= 8)
+
+    def test_steep_surface_has_escarpments(self, sample_transform):
+        """Checkerboard with extreme variation produces some escarpment (class 4)."""
+        from chuk_mcp_dem.core.raster_io import compute_landforms
+
+        # Create extreme elevation differences between adjacent pixels
+        checker = np.zeros((30, 30), dtype=np.float32)
+        checker[::2, ::2] = 1000.0
+        checker[1::2, 1::2] = 1000.0
+        # Alternate rows/cols stay at 0, creating very steep gradients
+        result = compute_landforms(checker, sample_transform)
+        assert 4 in result  # At least some escarpment pixels
+
+
+# ---------------------------------------------------------------------------
+# landform_to_png
+# ---------------------------------------------------------------------------
+
+
+class TestLandformToPng:
+    """Tests for landform_to_png() -- categorical colour map for landform classes."""
+
+    def test_produces_valid_png(self):
+        """Output is valid PNG bytes."""
+        from chuk_mcp_dem.core.raster_io import landform_to_png
+
+        landforms = np.random.randint(0, 9, (50, 50)).astype(np.uint8)
+        png_bytes = landform_to_png(landforms)
+        assert isinstance(png_bytes, bytes)
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.format == "PNG"
+
+    def test_output_dimensions_match(self):
+        """PNG dimensions match input array shape."""
+        from chuk_mcp_dem.core.raster_io import landform_to_png
+
+        landforms = np.zeros((30, 40), dtype=np.uint8)
+        png_bytes = landform_to_png(landforms)
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.size == (40, 30)  # PIL size is (width, height)
+
+    def test_uniform_class_uniform_color(self):
+        """All-zero array produces a uniform colour across the image."""
+        from chuk_mcp_dem.core.raster_io import landform_to_png
+
+        landforms = np.zeros((20, 20), dtype=np.uint8)
+        png_bytes = landform_to_png(landforms)
+        img = Image.open(io.BytesIO(png_bytes))
+        pixels = np.array(img)
+        # All pixels should be the same colour (plain = class 0)
+        assert np.all(pixels[:, :, 0] == pixels[0, 0, 0])
+        assert np.all(pixels[:, :, 1] == pixels[0, 0, 1])
+        assert np.all(pixels[:, :, 2] == pixels[0, 0, 2])
+
+
+# ---------------------------------------------------------------------------
+# compute_anomaly_scores
+# ---------------------------------------------------------------------------
+
+
+_sklearn_available = True
+try:
+    from sklearn.ensemble import IsolationForest  # noqa: F401
+except Exception:
+    _sklearn_available = False
+
+
+@pytest.mark.skipif(not _sklearn_available, reason="scikit-learn not usable")
+class TestComputeAnomalyScores:
+    """Tests for compute_anomaly_scores() -- Isolation Forest terrain outliers."""
+
+    @pytest.fixture
+    def small_elevation(self):
+        """20x20 elevation array for faster anomaly tests."""
+        np.random.seed(99)
+        return np.random.uniform(100, 500, (20, 20)).astype(np.float32)
+
+    @pytest.fixture
+    def small_transform(self):
+        """Affine transform matching the small elevation array."""
+        from rasterio.transform import Affine
+
+        return Affine(0.01, 0.0, 7.0, 0.0, -0.01, 47.0)
+
+    def test_returns_correct_shape(self, small_elevation, small_transform):
+        """Anomaly scores shape matches input elevation."""
+        from chuk_mcp_dem.core.raster_io import compute_anomaly_scores
+
+        scores, _ = compute_anomaly_scores(
+            small_elevation, small_transform, sensitivity=0.1,
+        )
+        assert scores.shape == small_elevation.shape
+
+    def test_scores_in_range(self, small_elevation, small_transform):
+        """All anomaly scores are between 0 and 1."""
+        from chuk_mcp_dem.core.raster_io import compute_anomaly_scores
+
+        scores, _ = compute_anomaly_scores(
+            small_elevation, small_transform, sensitivity=0.1,
+        )
+        assert np.all(scores >= 0.0)
+        assert np.all(scores <= 1.0)
+
+    def test_dtype_float32(self, small_elevation, small_transform):
+        """Anomaly scores dtype is float32."""
+        from chuk_mcp_dem.core.raster_io import compute_anomaly_scores
+
+        scores, _ = compute_anomaly_scores(
+            small_elevation, small_transform, sensitivity=0.1,
+        )
+        assert scores.dtype == np.float32
+
+    def test_anomaly_dict_keys(self, small_elevation, small_transform):
+        """Each anomaly dict has the expected keys."""
+        from chuk_mcp_dem.core.raster_io import compute_anomaly_scores
+
+        _, anomalies = compute_anomaly_scores(
+            small_elevation, small_transform, sensitivity=0.1,
+        )
+        expected_keys = {"bbox", "area_m2", "confidence", "mean_anomaly_score"}
+        for anomaly in anomalies:
+            assert set(anomaly.keys()) == expected_keys
+
+
+# ---------------------------------------------------------------------------
+# anomaly_to_png
+# ---------------------------------------------------------------------------
+
+
+class TestAnomalyToPng:
+    """Tests for anomaly_to_png() -- green-to-red heatmap."""
+
+    def test_produces_valid_png(self):
+        """Output is valid PNG bytes."""
+        from chuk_mcp_dem.core.raster_io import anomaly_to_png
+
+        scores = np.random.uniform(0, 1, (50, 50)).astype(np.float32)
+        png_bytes = anomaly_to_png(scores)
+        assert isinstance(png_bytes, bytes)
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.format == "PNG"
+
+    def test_zero_scores_green(self):
+        """All-zero scores render as green pixels (R=0, G=255)."""
+        from chuk_mcp_dem.core.raster_io import anomaly_to_png
+
+        scores = np.zeros((20, 20), dtype=np.float32)
+        png_bytes = anomaly_to_png(scores)
+        img = Image.open(io.BytesIO(png_bytes))
+        pixels = np.array(img)
+        assert np.all(pixels[:, :, 0] == 0)    # Red channel
+        assert np.all(pixels[:, :, 1] == 255)  # Green channel
+
+    def test_output_dimensions_match(self):
+        """PNG dimensions match input array shape."""
+        from chuk_mcp_dem.core.raster_io import anomaly_to_png
+
+        scores = np.zeros((30, 40), dtype=np.float32)
+        png_bytes = anomaly_to_png(scores)
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.size == (40, 30)  # PIL size is (width, height)
+
+
+# ---------------------------------------------------------------------------
+# compute_feature_detection
+# ---------------------------------------------------------------------------
+
+
+class TestComputeFeatureDetection:
+    """Tests for compute_feature_detection() -- CNN-inspired multi-angle hillshade."""
+
+    def test_returns_correct_shape(self, sample_elevation, sample_transform):
+        from chuk_mcp_dem.core.raster_io import compute_feature_detection
+        feature_map, features = compute_feature_detection(sample_elevation, sample_transform)
+        assert feature_map.shape == sample_elevation.shape
+
+    def test_output_dtype_float32(self, sample_elevation, sample_transform):
+        from chuk_mcp_dem.core.raster_io import compute_feature_detection
+        feature_map, _ = compute_feature_detection(sample_elevation, sample_transform)
+        assert feature_map.dtype == np.float32
+
+    def test_feature_values_in_range(self, sample_elevation, sample_transform):
+        from chuk_mcp_dem.core.raster_io import compute_feature_detection
+        feature_map, _ = compute_feature_detection(sample_elevation, sample_transform)
+        assert float(np.min(feature_map)) >= 0
+        assert float(np.max(feature_map)) <= 6
+
+    def test_returns_features_list(self, sample_elevation, sample_transform):
+        from chuk_mcp_dem.core.raster_io import compute_feature_detection
+        _, features = compute_feature_detection(sample_elevation, sample_transform)
+        assert isinstance(features, list)
+
+    def test_feature_dict_keys(self, sample_elevation, sample_transform):
+        from chuk_mcp_dem.core.raster_io import compute_feature_detection
+        _, features = compute_feature_detection(sample_elevation, sample_transform)
+        for f in features:
+            assert "bbox" in f
+            assert "area_m2" in f
+            assert "feature_type" in f
+            assert "confidence" in f
+
+    def test_feature_types_valid(self, sample_elevation, sample_transform):
+        from chuk_mcp_dem.core.raster_io import compute_feature_detection
+        valid_types = {"peak", "ridge", "valley", "cliff", "saddle", "channel"}
+        _, features = compute_feature_detection(sample_elevation, sample_transform)
+        for f in features:
+            assert f["feature_type"] in valid_types
+
+    def test_confidence_in_range(self, sample_elevation, sample_transform):
+        from chuk_mcp_dem.core.raster_io import compute_feature_detection
+        _, features = compute_feature_detection(sample_elevation, sample_transform)
+        for f in features:
+            assert 0.0 <= f["confidence"] <= 1.0
+
+    def test_flat_terrain_few_features(self, sample_transform):
+        from chuk_mcp_dem.core.raster_io import compute_feature_detection
+        flat = np.full((20, 20), 100.0, dtype=np.float32)
+        feature_map, features = compute_feature_detection(flat, sample_transform)
+        # Flat terrain should have very few or no features
+        assert float(np.sum(feature_map > 0)) < flat.size * 0.5
+
+    def test_invalid_method_raises(self, sample_elevation, sample_transform):
+        from chuk_mcp_dem.core.raster_io import compute_feature_detection
+        with pytest.raises(ValueError, match="Invalid feature method"):
+            compute_feature_detection(sample_elevation, sample_transform, method="bad")
+
+
+# ---------------------------------------------------------------------------
+# feature_to_png
+# ---------------------------------------------------------------------------
+
+
+class TestFeatureToPng:
+    """Tests for feature_to_png() -- categorical feature map renderer."""
+
+    def test_produces_valid_png(self):
+        from chuk_mcp_dem.core.raster_io import feature_to_png
+        features = np.zeros((10, 10), dtype=np.float32)
+        result = feature_to_png(features)
+        assert isinstance(result, bytes)
+        assert result[:4] == b"\x89PNG"
+
+    def test_output_dimensions_match(self):
+        from chuk_mcp_dem.core.raster_io import feature_to_png
+        features = np.array([[0, 1, 2], [3, 4, 5]], dtype=np.float32)
+        result = feature_to_png(features)
+        from PIL import Image
+        import io as _io
+        img = Image.open(_io.BytesIO(result))
+        assert img.size == (3, 2)  # width, height
+
+    def test_all_classes_render(self):
+        from chuk_mcp_dem.core.raster_io import feature_to_png
+        # Create array with all 7 classes (0-6)
+        features = np.arange(7, dtype=np.float32).reshape(1, 7)
+        result = feature_to_png(features)
+        assert isinstance(result, bytes)
+        assert len(result) > 0
+

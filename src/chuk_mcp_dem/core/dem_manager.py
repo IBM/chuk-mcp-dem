@@ -119,6 +119,65 @@ class ViewshedResult:
     radius_m: float
 
 
+@dataclass
+class TemporalChangeResult:
+    """Result of a temporal elevation change analysis."""
+
+    artifact_ref: str
+    preview_ref: str | None
+    crs: str
+    resolution_m: float
+    shape: list[int]
+    significance_threshold_m: float
+    volume_gained_m3: float
+    volume_lost_m3: float
+    significant_regions: list[dict]
+    dtype: str
+
+
+@dataclass
+class LandformResult:
+    """Result of a landform classification."""
+
+    artifact_ref: str
+    preview_ref: str | None
+    crs: str
+    resolution_m: float
+    shape: list[int]
+    class_distribution: dict[str, float]
+    dominant_landform: str
+    dtype: str
+
+
+@dataclass
+class AnomalyResult:
+    """Result of an anomaly detection analysis."""
+
+    artifact_ref: str
+    preview_ref: str | None
+    crs: str
+    resolution_m: float
+    shape: list[int]
+    anomaly_count: int
+    anomalies: list[dict]
+    dtype: str
+
+
+@dataclass
+class FeatureResult:
+    """Result of a terrain feature detection analysis."""
+
+    artifact_ref: str
+    preview_ref: str | None
+    crs: str
+    resolution_m: float
+    shape: list[int]
+    feature_count: int
+    feature_summary: dict[str, int]
+    features: list[dict]
+    dtype: str
+
+
 class DEMManager:
     """Central manager for DEM data operations."""
 
@@ -1162,6 +1221,377 @@ class DEMManager:
             visible_percentage=round(visible_pct, 1),
             observer_elevation_m=obs_elev,
             radius_m=radius_m,
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 3.0: ML-enhanced terrain analysis (async)
+    # ------------------------------------------------------------------
+
+    async def fetch_temporal_change(
+        self,
+        bbox: list[float],
+        before_source: str = "srtm",
+        after_source: str = "cop30",
+        significance_threshold_m: float = 1.0,
+        output_format: str = "geotiff",
+    ) -> TemporalChangeResult:
+        """Compare elevation between two DEM sources/epochs."""
+        from . import raster_io
+
+        self._validate_bbox(bbox)
+        src_before = self._get_source(before_source)
+        src_after = self._get_source(after_source)
+
+        # Fetch before tiles
+        before_urls = self._get_tile_urls(before_source, bbox)
+        if not before_urls:
+            raise ValueError(
+                ErrorMessages.COVERAGE_ERROR.format(src_before["name"], bbox)
+            )
+        before_elev, crs, tx_before = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, before_urls, bbox
+        )
+
+        # Fetch after tiles
+        after_urls = self._get_tile_urls(after_source, bbox)
+        if not after_urls:
+            raise ValueError(
+                ErrorMessages.COVERAGE_ERROR.format(src_after["name"], bbox)
+            )
+        after_elev, _, _ = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, after_urls, bbox
+        )
+
+        # Fill voids
+        before_elev = await asyncio.to_thread(raster_io.fill_voids, before_elev)
+        after_elev = await asyncio.to_thread(raster_io.fill_voids, after_elev)
+
+        # Resample if shapes differ
+        if before_elev.shape != after_elev.shape:
+            from scipy.ndimage import zoom
+
+            zoom_factors = (
+                before_elev.shape[0] / after_elev.shape[0],
+                before_elev.shape[1] / after_elev.shape[1],
+            )
+            after_elev = await asyncio.to_thread(zoom, after_elev, zoom_factors, order=1)
+
+        # Compute change
+        change, regions = await asyncio.to_thread(
+            raster_io.compute_elevation_change,
+            before_elev, after_elev, tx_before, significance_threshold_m,
+        )
+
+        # Compute volumes using approximate pixel area
+        cellsize_x = abs(float(tx_before[0]))
+        cellsize_y = abs(float(tx_before[4]))
+        mid_lat = (bbox[1] + bbox[3]) / 2.0
+        pixel_area_m2 = (
+            cellsize_x * 111320.0 * math.cos(math.radians(mid_lat))
+            * cellsize_y * 111320.0
+        )
+        positive = change[change > 0]
+        negative = change[change < 0]
+        vol_gained = float(np.sum(positive) * pixel_area_m2) if len(positive) > 0 else 0.0
+        vol_lost = float(np.abs(np.sum(negative)) * pixel_area_m2) if len(negative) > 0 else 0.0
+
+        # Output
+        if output_format == "png":
+            data_bytes = await asyncio.to_thread(raster_io.change_to_png, change)
+            suffix = ".png"
+        else:
+            data_bytes = await asyncio.to_thread(
+                raster_io.arrays_to_geotiff, change, crs, tx_before, "float32"
+            )
+            suffix = ".tif"
+
+        preview_ref = None
+        if output_format != "png":
+            try:
+                preview_bytes = await asyncio.to_thread(raster_io.change_to_png, change)
+                preview_ref = await self._store_raster(
+                    preview_bytes,
+                    {"type": "temporal_change_preview", "source": after_source, "format": "png"},
+                    suffix="_change.png",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate change preview: {e}")
+
+        artifact_ref = await self._store_raster(
+            data_bytes,
+            {
+                "schema_version": "1.0",
+                "type": "temporal_change",
+                "before_source": before_source,
+                "after_source": after_source,
+                "bbox": bbox,
+                "crs": str(crs),
+                "resolution_m": src_before["resolution_m"],
+                "shape": list(change.shape),
+            },
+            suffix=suffix,
+        )
+
+        return TemporalChangeResult(
+            artifact_ref=artifact_ref,
+            preview_ref=preview_ref,
+            crs=str(crs),
+            resolution_m=src_before["resolution_m"],
+            shape=list(change.shape),
+            significance_threshold_m=significance_threshold_m,
+            volume_gained_m3=vol_gained,
+            volume_lost_m3=vol_lost,
+            significant_regions=regions,
+            dtype="float32",
+        )
+
+    async def fetch_landforms(
+        self,
+        bbox: list[float],
+        source: str = DEFAULT_SOURCE,
+        method: str = "rule_based",
+        output_format: str = "geotiff",
+    ) -> LandformResult:
+        """Classify terrain into landform types for a bounding box."""
+        from . import raster_io
+
+        self._validate_bbox(bbox)
+        src = self._get_source(source)
+
+        tile_urls = self._get_tile_urls(source, bbox)
+        if not tile_urls:
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src["name"], bbox))
+
+        elevation, crs, transform = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, tile_urls, bbox
+        )
+
+        elevation = await asyncio.to_thread(raster_io.fill_voids, elevation)
+
+        landforms = await asyncio.to_thread(
+            raster_io.compute_landforms, elevation, transform, method
+        )
+
+        # Compute class distribution
+        from ..constants import LANDFORM_CLASSES
+
+        total_pixels = landforms.size
+        distribution: dict[str, float] = {}
+        for idx, cls_name in enumerate(LANDFORM_CLASSES):
+            count = int(np.sum(landforms == idx))
+            distribution[cls_name] = round(count / total_pixels * 100.0, 1)
+
+        dominant = max(distribution, key=distribution.get)  # type: ignore[arg-type]
+
+        if output_format == "png":
+            data_bytes = await asyncio.to_thread(
+                raster_io.landform_to_png, landforms
+            )
+            suffix = ".png"
+        else:
+            data_bytes = await asyncio.to_thread(
+                raster_io.arrays_to_geotiff,
+                landforms.astype(np.float32), crs, transform, "float32",
+            )
+            suffix = ".tif"
+
+        preview_ref = None
+        if output_format != "png":
+            try:
+                preview_bytes = await asyncio.to_thread(
+                    raster_io.landform_to_png, landforms
+                )
+                preview_ref = await self._store_raster(
+                    preview_bytes,
+                    {"type": "landform_preview", "source": source, "format": "png"},
+                    suffix="_landform.png",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate landform preview: {e}")
+
+        artifact_ref = await self._store_raster(
+            data_bytes,
+            {
+                "schema_version": "1.0",
+                "type": "landforms",
+                "source": source,
+                "method": method,
+                "bbox": bbox,
+                "crs": str(crs),
+                "resolution_m": src["resolution_m"],
+                "shape": list(landforms.shape),
+            },
+            suffix=suffix,
+        )
+
+        return LandformResult(
+            artifact_ref=artifact_ref,
+            preview_ref=preview_ref,
+            crs=str(crs),
+            resolution_m=src["resolution_m"],
+            shape=list(landforms.shape),
+            class_distribution=distribution,
+            dominant_landform=dominant,
+            dtype="uint8",
+        )
+
+    async def fetch_anomalies(
+        self,
+        bbox: list[float],
+        source: str = DEFAULT_SOURCE,
+        sensitivity: float = 0.1,
+        output_format: str = "geotiff",
+    ) -> AnomalyResult:
+        """Detect terrain anomalies for a bounding box."""
+        from . import raster_io
+
+        self._validate_bbox(bbox)
+        src = self._get_source(source)
+
+        tile_urls = self._get_tile_urls(source, bbox)
+        if not tile_urls:
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src["name"], bbox))
+
+        elevation, crs, transform = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, tile_urls, bbox
+        )
+
+        elevation = await asyncio.to_thread(raster_io.fill_voids, elevation)
+
+        scores, anomalies = await asyncio.to_thread(
+            raster_io.compute_anomaly_scores, elevation, transform, sensitivity
+        )
+
+        if output_format == "png":
+            data_bytes = await asyncio.to_thread(raster_io.anomaly_to_png, scores)
+            suffix = ".png"
+        else:
+            data_bytes = await asyncio.to_thread(
+                raster_io.arrays_to_geotiff, scores, crs, transform, "float32"
+            )
+            suffix = ".tif"
+
+        preview_ref = None
+        if output_format != "png":
+            try:
+                preview_bytes = await asyncio.to_thread(
+                    raster_io.anomaly_to_png, scores
+                )
+                preview_ref = await self._store_raster(
+                    preview_bytes,
+                    {"type": "anomaly_preview", "source": source, "format": "png"},
+                    suffix="_anomaly.png",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate anomaly preview: {e}")
+
+        artifact_ref = await self._store_raster(
+            data_bytes,
+            {
+                "schema_version": "1.0",
+                "type": "anomalies",
+                "source": source,
+                "sensitivity": sensitivity,
+                "bbox": bbox,
+                "crs": str(crs),
+                "resolution_m": src["resolution_m"],
+                "shape": list(scores.shape),
+            },
+            suffix=suffix,
+        )
+
+        return AnomalyResult(
+            artifact_ref=artifact_ref,
+            preview_ref=preview_ref,
+            crs=str(crs),
+            resolution_m=src["resolution_m"],
+            shape=list(scores.shape),
+            anomaly_count=len(anomalies),
+            anomalies=anomalies,
+            dtype="float32",
+        )
+
+    async def fetch_features(
+        self,
+        bbox: list[float],
+        source: str = DEFAULT_SOURCE,
+        method: str = "cnn_hillshade",
+        output_format: str = "geotiff",
+    ) -> FeatureResult:
+        """Detect terrain features for a bounding box."""
+        from . import raster_io
+
+        self._validate_bbox(bbox)
+        src = self._get_source(source)
+
+        tile_urls = self._get_tile_urls(source, bbox)
+        if not tile_urls:
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src["name"], bbox))
+
+        elevation, crs, transform = await asyncio.to_thread(
+            raster_io.read_and_merge_tiles, tile_urls, bbox
+        )
+
+        elevation = await asyncio.to_thread(raster_io.fill_voids, elevation)
+
+        feature_map, features_list = await asyncio.to_thread(
+            raster_io.compute_feature_detection, elevation, transform, method
+        )
+
+        # Compute feature summary (count per type)
+        feature_summary: dict[str, int] = {}
+        for f in features_list:
+            ftype = f["feature_type"]
+            feature_summary[ftype] = feature_summary.get(ftype, 0) + 1
+
+        if output_format == "png":
+            data_bytes = await asyncio.to_thread(raster_io.feature_to_png, feature_map)
+            suffix = ".png"
+        else:
+            data_bytes = await asyncio.to_thread(
+                raster_io.arrays_to_geotiff, feature_map, crs, transform, "float32"
+            )
+            suffix = ".tif"
+
+        preview_ref = None
+        if output_format != "png":
+            try:
+                preview_bytes = await asyncio.to_thread(
+                    raster_io.feature_to_png, feature_map
+                )
+                preview_ref = await self._store_raster(
+                    preview_bytes,
+                    {"type": "feature_preview", "source": source, "format": "png"},
+                    suffix="_feature.png",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate feature preview: {e}")
+
+        artifact_ref = await self._store_raster(
+            data_bytes,
+            {
+                "schema_version": "1.0",
+                "type": "features",
+                "source": source,
+                "method": method,
+                "bbox": bbox,
+                "crs": str(crs),
+                "resolution_m": src["resolution_m"],
+                "shape": list(feature_map.shape),
+            },
+            suffix=suffix,
+        )
+
+        return FeatureResult(
+            artifact_ref=artifact_ref,
+            preview_ref=preview_ref,
+            crs=str(crs),
+            resolution_m=src["resolution_m"],
+            shape=list(feature_map.shape),
+            feature_count=len(features_list),
+            feature_summary=feature_summary,
+            features=features_list,
+            dtype="float32",
         )
 
     # ------------------------------------------------------------------

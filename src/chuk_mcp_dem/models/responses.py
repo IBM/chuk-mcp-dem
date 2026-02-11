@@ -678,3 +678,207 @@ class WatershedResponse(BaseModel):
         if self.license_warning:
             lines.append(f"WARNING: {self.license_warning}")
         return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.0: ML-enhanced terrain analysis responses
+# ---------------------------------------------------------------------------
+
+
+class ChangeRegion(BaseModel):
+    """A spatially connected region of significant elevation change."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    area_m2: float = Field(..., description="Region area in square metres")
+    mean_change_m: float = Field(..., description="Mean elevation change in metres")
+    max_change_m: float = Field(..., description="Maximum absolute change in metres")
+    change_type: str = Field(..., description="Type of change: 'gain' or 'loss'")
+
+
+class TemporalChangeResponse(BaseModel):
+    """Response model for temporal elevation change analysis."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    before_source: str = Field(..., description="DEM source for earlier epoch")
+    after_source: str = Field(..., description="DEM source for later epoch")
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    artifact_ref: str = Field(..., description="Artifact store reference for change map")
+    preview_ref: str | None = Field(None, description="PNG preview artifact reference")
+    crs: str = Field(..., description="Coordinate reference system")
+    resolution_m: float = Field(..., description="Output resolution in metres")
+    shape: list[int] = Field(..., description="Array shape [height, width]")
+    significance_threshold_m: float = Field(
+        ..., description="Significance threshold in metres"
+    )
+    volume_gained_m3: float = Field(
+        ..., description="Total volume of elevation gain in m^3"
+    )
+    volume_lost_m3: float = Field(
+        ..., description="Total volume of elevation loss in m^3"
+    )
+    significant_regions: list[ChangeRegion] = Field(
+        ..., description="List of significant change regions"
+    )
+    output_format: str = Field(..., description="Output format (geotiff or png)")
+    license_warning: str | None = Field(None, description="License restriction warning")
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        shape_str = f"{self.shape[0]}x{self.shape[1]}"
+        lines = [
+            f"Temporal Change: {self.before_source} -> {self.after_source}",
+            f"Artifact: {self.artifact_ref}",
+            f"Shape: {shape_str} ({self.crs}, {self.resolution_m}m)",
+            f"Threshold: {self.significance_threshold_m}m",
+            f"Volume gained: {self.volume_gained_m3:.1f} m^3",
+            f"Volume lost: {self.volume_lost_m3:.1f} m^3",
+            f"Significant regions: {len(self.significant_regions)}",
+            f"Format: {self.output_format}",
+        ]
+        if self.preview_ref:
+            lines.append(f"Preview: {self.preview_ref}")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
+        return "\n".join(lines)
+
+
+class LandformResponse(BaseModel):
+    """Response model for landform classification."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., description="DEM source used")
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    artifact_ref: str = Field(..., description="Artifact store reference for landform map")
+    preview_ref: str | None = Field(None, description="PNG preview artifact reference")
+    method: str = Field(..., description="Classification method used")
+    crs: str = Field(..., description="Coordinate reference system")
+    resolution_m: float = Field(..., description="Output resolution in metres")
+    shape: list[int] = Field(..., description="Array shape [height, width]")
+    class_distribution: dict[str, float] = Field(
+        ..., description="Percentage of each landform class"
+    )
+    dominant_landform: str = Field(..., description="Most common landform class")
+    output_format: str = Field(..., description="Output format (geotiff or png)")
+    license_warning: str | None = Field(None, description="License restriction warning")
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        shape_str = f"{self.shape[0]}x{self.shape[1]}"
+        lines = [
+            f"Landforms: {self.source} ({self.method})",
+            f"Artifact: {self.artifact_ref}",
+            f"Shape: {shape_str} ({self.crs}, {self.resolution_m}m)",
+            f"Dominant: {self.dominant_landform}",
+            f"Format: {self.output_format}",
+        ]
+        for cls, pct in self.class_distribution.items():
+            lines.append(f"  {cls}: {pct:.1f}%")
+        if self.preview_ref:
+            lines.append(f"Preview: {self.preview_ref}")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
+        return "\n".join(lines)
+
+
+class TerrainAnomaly(BaseModel):
+    """A spatially connected region of anomalous terrain."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    area_m2: float = Field(..., description="Region area in square metres")
+    confidence: float = Field(..., description="Detection confidence (0-1)", ge=0, le=1)
+    mean_anomaly_score: float = Field(..., description="Mean anomaly score in region")
+
+
+class AnomalyResponse(BaseModel):
+    """Response model for terrain anomaly detection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., description="DEM source used")
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    artifact_ref: str = Field(..., description="Artifact store reference for anomaly scores")
+    preview_ref: str | None = Field(None, description="PNG preview artifact reference")
+    crs: str = Field(..., description="Coordinate reference system")
+    resolution_m: float = Field(..., description="Output resolution in metres")
+    shape: list[int] = Field(..., description="Array shape [height, width]")
+    sensitivity: float = Field(..., description="Detection sensitivity parameter")
+    anomaly_count: int = Field(
+        ..., description="Number of anomalous regions detected", ge=0
+    )
+    anomalies: list[TerrainAnomaly] = Field(..., description="Detected anomalies")
+    output_format: str = Field(..., description="Output format (geotiff or png)")
+    license_warning: str | None = Field(None, description="License restriction warning")
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        shape_str = f"{self.shape[0]}x{self.shape[1]}"
+        lines = [
+            f"Anomalies: {self.source}",
+            f"Artifact: {self.artifact_ref}",
+            f"Shape: {shape_str} ({self.crs}, {self.resolution_m}m)",
+            f"Sensitivity: {self.sensitivity}",
+            f"Anomalies found: {self.anomaly_count}",
+            f"Format: {self.output_format}",
+        ]
+        if self.preview_ref:
+            lines.append(f"Preview: {self.preview_ref}")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
+        return "\n".join(lines)
+
+
+class TerrainFeature(BaseModel):
+    """A detected terrain feature region."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    area_m2: float = Field(..., description="Feature area in square metres")
+    feature_type: str = Field(..., description="Feature type: peak, ridge, valley, cliff, saddle, channel")
+    confidence: float = Field(..., description="Detection confidence (0-1)", ge=0, le=1)
+
+
+class FeatureDetectionResponse(BaseModel):
+    """Response model for terrain feature detection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., description="DEM source used")
+    bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
+    artifact_ref: str = Field(..., description="Artifact store reference for feature map")
+    preview_ref: str | None = Field(None, description="PNG preview artifact reference")
+    method: str = Field(..., description="Detection method used")
+    crs: str = Field(..., description="Coordinate reference system")
+    resolution_m: float = Field(..., description="Output resolution in metres")
+    shape: list[int] = Field(..., description="Array shape [height, width]")
+    feature_count: int = Field(..., description="Number of features detected", ge=0)
+    feature_summary: dict[str, int] = Field(
+        ..., description="Count of each feature type detected"
+    )
+    features: list[TerrainFeature] = Field(..., description="Detected terrain features")
+    output_format: str = Field(..., description="Output format (geotiff or png)")
+    license_warning: str | None = Field(None, description="License restriction warning")
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        shape_str = f"{self.shape[0]}x{self.shape[1]}"
+        lines = [
+            f"Feature Detection: {self.source} ({self.method})",
+            f"Artifact: {self.artifact_ref}",
+            f"Shape: {shape_str} ({self.crs}, {self.resolution_m}m)",
+            f"Features found: {self.feature_count}",
+            f"Format: {self.output_format}",
+        ]
+        for ftype, count in self.feature_summary.items():
+            lines.append(f"  {ftype}: {count}")
+        if self.preview_ref:
+            lines.append(f"Preview: {self.preview_ref}")
+        if self.license_warning:
+            lines.append(f"WARNING: {self.license_warning}")
+        return "\n".join(lines)

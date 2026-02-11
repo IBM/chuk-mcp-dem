@@ -14,14 +14,19 @@ import pytest
 from pydantic import ValidationError
 
 from chuk_mcp_dem.models.responses import (
+    AnomalyResponse,
     AspectResponse,
     CapabilitiesResponse,
+    ChangeRegion,
     CoverageCheckResponse,
     ContourResponse,
     CurvatureResponse,
     ErrorResponse,
+    FeatureDetectionResponse,
+    TerrainFeature,
     FetchResponse,
     HillshadeResponse,
+    LandformResponse,
     MultiPointResponse,
     PointElevationResponse,
     PointInfo,
@@ -33,6 +38,8 @@ from chuk_mcp_dem.models.responses import (
     SourceInfo,
     SourcesResponse,
     StatusResponse,
+    TemporalChangeResponse,
+    TerrainAnomaly,
     TRIResponse,
     ViewshedResponse,
     WatershedResponse,
@@ -1391,3 +1398,489 @@ class TestLicenseWarningOnModels:
             message="OK",
         )
         assert "WARNING: Non-commercial" in resp.to_text()
+
+
+# ===========================================================================
+# ChangeRegion
+# ===========================================================================
+
+
+class TestChangeRegion:
+    def test_creation(self):
+        r = ChangeRegion(
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            area_m2=5000.0,
+            mean_change_m=2.5,
+            max_change_m=5.0,
+            change_type="gain",
+        )
+        assert r.bbox == [7.0, 46.0, 8.0, 47.0]
+        assert r.area_m2 == 5000.0
+        assert r.mean_change_m == 2.5
+        assert r.max_change_m == 5.0
+        assert r.change_type == "gain"
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            ChangeRegion(
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                area_m2=5000.0,
+                mean_change_m=2.5,
+                max_change_m=5.0,
+                change_type="gain",
+                bogus="nope",
+            )
+
+    def test_gain_type(self):
+        r = ChangeRegion(
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            area_m2=1000.0,
+            mean_change_m=1.0,
+            max_change_m=3.0,
+            change_type="gain",
+        )
+        assert r.change_type == "gain"
+
+    def test_loss_type(self):
+        r = ChangeRegion(
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            area_m2=1000.0,
+            mean_change_m=-2.0,
+            max_change_m=-4.0,
+            change_type="loss",
+        )
+        assert r.change_type == "loss"
+
+
+# ===========================================================================
+# TemporalChangeResponse
+# ===========================================================================
+
+
+def _make_temporal_change(**overrides) -> TemporalChangeResponse:
+    defaults = dict(
+        before_source="srtm",
+        after_source="cop30",
+        bbox=[7.0, 46.0, 8.0, 47.0],
+        artifact_ref="dem/change_abc.tif",
+        preview_ref=None,
+        crs="EPSG:4326",
+        resolution_m=30.0,
+        shape=[100, 100],
+        significance_threshold_m=1.0,
+        volume_gained_m3=50000.0,
+        volume_lost_m3=30000.0,
+        significant_regions=[],
+        output_format="geotiff",
+        message="Temporal change computed",
+    )
+    defaults.update(overrides)
+    return TemporalChangeResponse(**defaults)
+
+
+class TestTemporalChangeResponse:
+    def test_creation(self):
+        r = _make_temporal_change()
+        assert r.before_source == "srtm"
+        assert r.after_source == "cop30"
+        assert r.bbox == [7.0, 46.0, 8.0, 47.0]
+        assert r.artifact_ref == "dem/change_abc.tif"
+        assert r.preview_ref is None
+        assert r.crs == "EPSG:4326"
+        assert r.resolution_m == 30.0
+        assert r.shape == [100, 100]
+        assert r.significance_threshold_m == 1.0
+        assert r.volume_gained_m3 == 50000.0
+        assert r.volume_lost_m3 == 30000.0
+        assert r.significant_regions == []
+        assert r.output_format == "geotiff"
+        assert r.message == "Temporal change computed"
+
+    def test_to_text_returns_string(self):
+        text = _make_temporal_change().to_text()
+        assert isinstance(text, str)
+        assert "Temporal Change:" in text
+        assert "srtm" in text
+        assert "cop30" in text
+        assert "100x100" in text
+
+    def test_to_text_with_preview(self):
+        text = _make_temporal_change(preview_ref="dem/change_abc.png").to_text()
+        assert "Preview:" in text
+
+    def test_to_text_no_preview(self):
+        text = _make_temporal_change(preview_ref=None).to_text()
+        assert "Preview" not in text
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            _make_temporal_change(bogus="nope")
+
+    def test_license_warning_in_text(self):
+        text = _make_temporal_change(license_warning="CC-BY-NC-SA-4.0").to_text()
+        assert "WARNING:" in text
+
+    def test_volume_in_text(self):
+        text = _make_temporal_change().to_text()
+        assert "50000.0 m^3" in text
+
+    def test_with_regions(self):
+        region = ChangeRegion(
+            bbox=[7.2, 46.2, 7.4, 46.4],
+            area_m2=2000.0,
+            mean_change_m=3.0,
+            max_change_m=6.0,
+            change_type="gain",
+        )
+        r = _make_temporal_change(significant_regions=[region])
+        assert len(r.significant_regions) == 1
+        assert r.significant_regions[0].change_type == "gain"
+
+
+# ===========================================================================
+# LandformResponse
+# ===========================================================================
+
+
+def _make_landform(**overrides) -> LandformResponse:
+    defaults = dict(
+        source="cop30",
+        bbox=[7.0, 46.0, 8.0, 47.0],
+        artifact_ref="dem/landform_abc.tif",
+        preview_ref=None,
+        method="rule_based",
+        crs="EPSG:4326",
+        resolution_m=30.0,
+        shape=[100, 100],
+        class_distribution={"plain": 60.0, "ridge": 15.0, "valley": 10.0, "plateau": 15.0},
+        dominant_landform="plain",
+        output_format="geotiff",
+        message="Landform classification complete",
+    )
+    defaults.update(overrides)
+    return LandformResponse(**defaults)
+
+
+class TestLandformResponse:
+    def test_creation(self):
+        r = _make_landform()
+        assert r.source == "cop30"
+        assert r.bbox == [7.0, 46.0, 8.0, 47.0]
+        assert r.artifact_ref == "dem/landform_abc.tif"
+        assert r.preview_ref is None
+        assert r.method == "rule_based"
+        assert r.crs == "EPSG:4326"
+        assert r.resolution_m == 30.0
+        assert r.shape == [100, 100]
+        assert r.class_distribution == {
+            "plain": 60.0, "ridge": 15.0, "valley": 10.0, "plateau": 15.0
+        }
+        assert r.dominant_landform == "plain"
+        assert r.output_format == "geotiff"
+        assert r.message == "Landform classification complete"
+
+    def test_to_text_returns_string(self):
+        text = _make_landform().to_text()
+        assert isinstance(text, str)
+        assert "Landforms:" in text
+        assert "cop30" in text
+        assert "rule_based" in text
+        assert "plain" in text
+
+    def test_to_text_class_distribution(self):
+        text = _make_landform().to_text()
+        assert "60.0%" in text
+        assert "15.0%" in text
+        assert "10.0%" in text
+
+    def test_to_text_with_preview(self):
+        text = _make_landform(preview_ref="dem/landform_abc.png").to_text()
+        assert "Preview:" in text
+
+    def test_to_text_no_preview(self):
+        text = _make_landform(preview_ref=None).to_text()
+        assert "Preview" not in text
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            _make_landform(bogus="nope")
+
+    def test_license_warning_in_text(self):
+        text = _make_landform(license_warning="CC-BY-NC-SA-4.0").to_text()
+        assert "WARNING:" in text
+
+
+# ===========================================================================
+# TerrainAnomaly
+# ===========================================================================
+
+
+class TestTerrainAnomaly:
+    def test_creation(self):
+        a = TerrainAnomaly(
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            area_m2=3000.0,
+            confidence=0.85,
+            mean_anomaly_score=2.1,
+        )
+        assert a.bbox == [7.0, 46.0, 8.0, 47.0]
+        assert a.area_m2 == 3000.0
+        assert a.confidence == 0.85
+        assert a.mean_anomaly_score == 2.1
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            TerrainAnomaly(
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                area_m2=3000.0,
+                confidence=0.5,
+                mean_anomaly_score=1.0,
+                bogus="nope",
+            )
+
+    def test_confidence_bounds(self):
+        with pytest.raises(ValidationError):
+            TerrainAnomaly(
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                area_m2=3000.0,
+                confidence=1.5,
+                mean_anomaly_score=1.0,
+            )
+        with pytest.raises(ValidationError):
+            TerrainAnomaly(
+                bbox=[7.0, 46.0, 8.0, 47.0],
+                area_m2=3000.0,
+                confidence=-0.1,
+                mean_anomaly_score=1.0,
+            )
+
+    def test_confidence_zero(self):
+        a = TerrainAnomaly(
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            area_m2=3000.0,
+            confidence=0.0,
+            mean_anomaly_score=0.5,
+        )
+        assert a.confidence == 0.0
+
+    def test_confidence_one(self):
+        a = TerrainAnomaly(
+            bbox=[7.0, 46.0, 8.0, 47.0],
+            area_m2=3000.0,
+            confidence=1.0,
+            mean_anomaly_score=3.0,
+        )
+        assert a.confidence == 1.0
+
+
+# ===========================================================================
+# AnomalyResponse
+# ===========================================================================
+
+
+def _make_anomaly(**overrides) -> AnomalyResponse:
+    defaults = dict(
+        source="cop30",
+        bbox=[7.0, 46.0, 8.0, 47.0],
+        artifact_ref="dem/anomaly_abc.tif",
+        preview_ref=None,
+        crs="EPSG:4326",
+        resolution_m=30.0,
+        shape=[100, 100],
+        sensitivity=0.1,
+        anomaly_count=0,
+        anomalies=[],
+        output_format="geotiff",
+        message="Anomaly detection complete",
+    )
+    defaults.update(overrides)
+    return AnomalyResponse(**defaults)
+
+
+class TestAnomalyResponse:
+    def test_creation(self):
+        r = _make_anomaly()
+        assert r.source == "cop30"
+        assert r.bbox == [7.0, 46.0, 8.0, 47.0]
+        assert r.artifact_ref == "dem/anomaly_abc.tif"
+        assert r.preview_ref is None
+        assert r.crs == "EPSG:4326"
+        assert r.resolution_m == 30.0
+        assert r.shape == [100, 100]
+        assert r.sensitivity == 0.1
+        assert r.anomaly_count == 0
+        assert r.anomalies == []
+        assert r.output_format == "geotiff"
+        assert r.message == "Anomaly detection complete"
+
+    def test_to_text_returns_string(self):
+        text = _make_anomaly().to_text()
+        assert isinstance(text, str)
+        assert "Anomalies:" in text
+        assert "cop30" in text
+        assert "Sensitivity: 0.1" in text
+
+    def test_to_text_with_preview(self):
+        text = _make_anomaly(preview_ref="dem/anomaly_abc.png").to_text()
+        assert "Preview:" in text
+
+    def test_to_text_no_preview(self):
+        text = _make_anomaly(preview_ref=None).to_text()
+        assert "Preview" not in text
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            _make_anomaly(bogus="nope")
+
+    def test_anomaly_count_non_negative(self):
+        with pytest.raises(ValidationError):
+            _make_anomaly(anomaly_count=-1)
+
+    def test_license_warning_in_text(self):
+        text = _make_anomaly(license_warning="CC-BY-NC-SA-4.0").to_text()
+        assert "WARNING:" in text
+
+    def test_with_anomalies(self):
+        anomaly = TerrainAnomaly(
+            bbox=[7.2, 46.2, 7.4, 46.4],
+            area_m2=1500.0,
+            confidence=0.9,
+            mean_anomaly_score=2.5,
+        )
+        r = _make_anomaly(anomaly_count=1, anomalies=[anomaly])
+        assert r.anomaly_count == 1
+        assert len(r.anomalies) == 1
+        assert r.anomalies[0].confidence == 0.9
+
+
+# ===========================================================================
+# FeatureDetectionResponse
+# ===========================================================================
+
+
+class TestTerrainFeature:
+    """Tests for TerrainFeature model."""
+
+    @staticmethod
+    def _make(**overrides):
+        defaults = {
+            "bbox": [7.0, 46.0, 8.0, 47.0],
+            "area_m2": 500.0,
+            "feature_type": "ridge",
+            "confidence": 0.75,
+        }
+        defaults.update(overrides)
+        return TerrainFeature(**defaults)
+
+    def test_creation(self):
+        obj = self._make()
+        assert obj.feature_type == "ridge"
+        assert obj.confidence == 0.75
+
+    def test_area_stored(self):
+        obj = self._make(area_m2=1234.5)
+        assert obj.area_m2 == 1234.5
+
+    def test_confidence_bounds(self):
+        self._make(confidence=0.0)
+        self._make(confidence=1.0)
+
+    def test_confidence_below_zero_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(confidence=-0.1)
+
+    def test_confidence_above_one_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(confidence=1.1)
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(extra="bad")
+
+
+class TestFeatureDetectionResponse:
+    """Tests for FeatureDetectionResponse model."""
+
+    @staticmethod
+    def _make(**overrides):
+        defaults = {
+            "source": "cop30",
+            "bbox": [7.0, 46.0, 8.0, 47.0],
+            "artifact_ref": "abc123",
+            "preview_ref": None,
+            "method": "cnn_hillshade",
+            "crs": "EPSG:4326",
+            "resolution_m": 30.0,
+            "shape": [100, 100],
+            "feature_count": 5,
+            "feature_summary": {"ridge": 3, "peak": 2},
+            "features": [],
+            "output_format": "geotiff",
+            "license_warning": None,
+            "message": "Features detected",
+        }
+        defaults.update(overrides)
+        return FeatureDetectionResponse(**defaults)
+
+    def test_creation(self):
+        obj = self._make()
+        assert obj.source == "cop30"
+        assert obj.feature_count == 5
+
+    def test_feature_summary(self):
+        obj = self._make(feature_summary={"ridge": 10, "valley": 5})
+        assert obj.feature_summary["ridge"] == 10
+
+    def test_with_features(self):
+        feat = TerrainFeature(
+            bbox=[7.0, 46.0, 7.5, 46.5], area_m2=500.0,
+            feature_type="peak", confidence=0.8,
+        )
+        obj = self._make(features=[feat], feature_count=1)
+        assert len(obj.features) == 1
+        assert obj.features[0].feature_type == "peak"
+
+    def test_to_text_returns_string(self):
+        obj = self._make()
+        text = obj.to_text()
+        assert isinstance(text, str)
+        assert "Feature Detection:" in text
+
+    def test_to_text_contains_count(self):
+        obj = self._make(feature_count=42)
+        text = obj.to_text()
+        assert "42" in text
+
+    def test_to_text_contains_summary(self):
+        obj = self._make(feature_summary={"ridge": 3})
+        text = obj.to_text()
+        assert "ridge" in text
+
+    def test_format_response_json(self):
+        obj = self._make()
+        result = format_response(obj, "json")
+        data = json.loads(result)
+        assert data["method"] == "cnn_hillshade"
+        assert data["feature_count"] == 5
+
+    def test_format_response_text(self):
+        obj = self._make()
+        result = format_response(obj, "text")
+        assert "Feature Detection:" in result
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(error="bad field")
+
+    def test_negative_feature_count_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(feature_count=-1)
+
+    def test_preview_ref_optional(self):
+        obj = self._make(preview_ref="preview123")
+        assert obj.preview_ref == "preview123"
+
+    def test_license_warning_optional(self):
+        obj = self._make(license_warning="FABDEM warning")
+        text = obj.to_text()
+        assert "WARNING" in text

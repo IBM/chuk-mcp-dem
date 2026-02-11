@@ -37,7 +37,7 @@ at server startup, not at module import time.
 
 ### 6. Test Coverage >90% per File, 95%+ Overall
 
-1006 tests across 8 test files. Overall project coverage is 95%.
+1167 tests across 8 test files.
 Every source module maintains at least 78% line coverage (async_server.py,
 which has a short `if __name__` block), with most modules at 95-100%.
 Tests mock at the `DEMManager` level for tool tests, and at the rasterio
@@ -59,7 +59,7 @@ server.py                         # CLI entry point (sync)
   +-- async_server.py             # Async server setup, tool registration
        +-- tools/discovery/api.py       # list_sources, describe_source, status, capabilities
        +-- tools/download/api.py        # fetch, fetch_point, fetch_points, check_coverage, estimate_size
-       +-- tools/analysis/api.py        # hillshade, slope, aspect, curvature, TRI, contour, watershed, profile, viewshed
+       +-- tools/analysis/api.py        # hillshade, slope, aspect, curvature, TRI, contour, watershed, profile, viewshed, landforms, anomalies, temporal change, feature detection
        +-- core/dem_manager.py          # Cache, download pipeline, terrain, artifact storage
             +-- core/raster_io.py       # COG reading, merging, sampling, terrain, profile, viewshed, PNG
 
@@ -92,6 +92,7 @@ The central orchestrator. Manages:
 - **Terrain analysis**: `fetch_hillshade()`, `fetch_slope()`, `fetch_aspect()`, `fetch_curvature()`, `fetch_tri()`, `fetch_contours()`, `fetch_watershed()`
 - **Profile extraction**: `fetch_profile()` with haversine distances and gain/loss
 - **Viewshed analysis**: `fetch_viewshed()` with DDA ray-casting visibility
+- **ML-enhanced analysis**: `fetch_landforms()` (rule-based classification), `fetch_anomalies()` (Isolation Forest), `fetch_temporal_change()` (pixel subtraction), `fetch_features()` (CNN-inspired multi-angle hillshade)
 - **Void filling**: Nearest-neighbour interpolation for NaN pixels
 - **Artifact storage**: `_store_raster()` writes bytes + metadata to chuk-artifacts
 - **Coverage checking**: `check_coverage()` and `estimate_size()` without I/O
@@ -99,7 +100,7 @@ The central orchestrator. Manages:
 
 - **License warnings**: `get_license_warning()` checks for FABDEM non-commercial restrictions
 
-Result dataclasses: `ElevationResult`, `TerrainResult`, `ContourResult`, `ProfileResult`, `ViewshedResult`.
+Result dataclasses: `ElevationResult`, `TerrainResult`, `ContourResult`, `ProfileResult`, `ViewshedResult`, `LandformResult`, `AnomalyResult`, `TemporalChangeResult`, `FeatureResult`.
 
 ### `core/raster_io.py`
 
@@ -127,6 +128,14 @@ Pure I/O layer -- all functions are synchronous (called via `to_thread()`):
 - `tri_to_png()`: Green-yellow-red ramp for TRI visualisation
 - `contours_to_png()`: Terrain background with contour line overlay
 - `watershed_to_png()`: Log-scaled blue ramp for stream network visualisation
+- `compute_landforms()`: Rule-based landform classification (slope + curvature + TRI thresholds)
+- `landform_to_png()`: Categorical colourmap for 9 landform classes
+- `compute_anomaly_scores()`: Isolation Forest on terrain feature vectors (slope, curvature, TRI, roughness)
+- `anomaly_to_png()`: Yellow-red heatmap for anomaly scores
+- `compute_elevation_change()`: Pixel subtraction with significance thresholding and region labelling
+- `change_to_png()`: Diverging blue-white-red colourmap for elevation change
+- `compute_feature_detection()`: Multi-angle hillshade (8 azimuths) + Sobel edge filters + slope/curvature classification
+- `feature_to_png()`: Categorical colourmap for 7 feature classes (none, peak, ridge, valley, cliff, saddle, channel)
 
 ### `models/responses.py`
 
@@ -135,7 +144,9 @@ serialisation errors early. Includes `SourcesResponse`, `FetchResponse`,
 `PointElevationResponse`, `MultiPointResponse`, `CoverageCheckResponse`,
 `SizeEstimateResponse`, `StatusResponse`, `CapabilitiesResponse`,
 `HillshadeResponse`, `SlopeResponse`, `AspectResponse`, `CurvatureResponse`,
-`TRIResponse`, `ContourResponse`, `WatershedResponse`, `ProfilePointInfo`, `ProfileResponse`, `ViewshedResponse`.
+`TRIResponse`, `ContourResponse`, `WatershedResponse`, `ProfilePointInfo`, `ProfileResponse`, `ViewshedResponse`,
+`LandformResponse`, `AnomalyDetectionResponse`, `TerrainAnomaly`,
+`TemporalChangeResponse`, `ChangeRegion`, `FeatureDetectionResponse`, `TerrainFeature`.
 
 Every response model implements `to_text()` for human-readable output mode.
 Models that accept a `source` parameter include an optional `license_warning` field,
@@ -255,6 +266,55 @@ Slope, aspect, curvature, TRI, contour, and watershed follow the same pattern, s
        |     +-- _check_line_of_sight() per edge pixel <-- line-of-sight rays
        +-- to_thread(raster_io.arrays_to_geotiff)      <-- visibility raster
        +-- _store_raster()                             <-- artifact storage
+```
+
+### ML-Enhanced Terrain Analysis (Phase 3.0)
+
+All Phase 3.0 tools follow the same 5-layer pattern:
+
+```
+8. dem_classify_landforms(bbox, source, method)
+   +-- manager.fetch_landforms()
+       +-- _validate_bbox → _get_tile_urls → read_and_merge → fill_voids
+       +-- to_thread(raster_io.compute_landforms)       <-- rule-based classification
+       |     +-- compute_slope() + compute_curvature() + compute_tri()
+       |     +-- threshold-based pixel classification (9 classes)
+       +-- to_thread(raster_io.landform_to_png)          <-- categorical PNG
+       +-- _store_raster()
+
+9. dem_detect_anomalies(bbox, source, sensitivity)
+   +-- manager.fetch_anomalies()
+       +-- _validate_bbox → _get_tile_urls → read_and_merge → fill_voids
+       +-- to_thread(raster_io.compute_anomaly_scores)   <-- Isolation Forest
+       |     +-- compute_slope() + compute_curvature() + compute_tri()
+       |     +-- stack into feature vectors per pixel
+       |     +-- IsolationForest.fit_predict() + decision_function()
+       |     +-- scipy.ndimage.label() for connected regions
+       +-- to_thread(raster_io.anomaly_to_png)           <-- heatmap PNG
+       +-- _store_raster()
+
+10. dem_compare_temporal(bbox, before_source, after_source, threshold)
+    +-- manager.fetch_temporal_change()
+        +-- fetch before + after elevation at same resolution
+        +-- to_thread(raster_io.compute_elevation_change) <-- pixel subtraction
+        |     +-- resample to common grid
+        |     +-- significance thresholding
+        |     +-- scipy.ndimage.label() for change regions
+        +-- to_thread(raster_io.change_to_png)            <-- diverging colourmap
+        +-- _store_raster()
+
+11. dem_detect_features(bbox, source, method)
+    +-- manager.fetch_features()
+        +-- _validate_bbox → _get_tile_urls → read_and_merge → fill_voids
+        +-- to_thread(raster_io.compute_feature_detection) <-- CNN-inspired
+        |     +-- 8 hillshades at azimuths [0,45,90,...,315]
+        |     +-- Sobel edge filter on each → edge consensus
+        |     +-- compute_slope() + compute_curvature()
+        |     +-- classify: peak(1), ridge(2), valley(3), cliff(4), saddle(5), channel(6)
+        |     +-- morphological cleanup (binary_opening/closing)
+        |     +-- scipy.ndimage.label() → per-region stats
+        +-- to_thread(raster_io.feature_to_png)            <-- categorical colourmap
+        +-- _store_raster()
 ```
 
 ---
