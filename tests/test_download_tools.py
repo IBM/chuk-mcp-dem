@@ -609,6 +609,7 @@ class TestNormalizePoints:
 
     def setup_method(self):
         from chuk_mcp_dem.tools.download.api import _normalize_points
+
         self.normalize = _normalize_points
 
     def test_correct_input_unchanged(self):
