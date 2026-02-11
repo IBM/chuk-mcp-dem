@@ -805,14 +805,30 @@ def watershed_to_png(
     return buf.getvalue()
 
 
+def _cell_size_meters(transform: Transform, nrows: int) -> tuple[float, float]:
+    """Convert transform cell sizes to approximate metres.
+
+    If the pixel sizes are in geographic degrees (< 1.0), convert to metres
+    using the centre latitude.  Otherwise return the values unchanged.
+    """
+    dx = abs(transform[0])
+    dy = abs(transform[4])
+    if dx < 1.0:  # Geographic coordinates (degrees)
+        import math
+
+        centre_lat = transform[5] + (nrows / 2) * transform[4]
+        dx = dx * 111_320.0 * math.cos(math.radians(centre_lat))
+        dy = dy * 111_320.0
+    return dx, dy
+
+
 def compute_slope(
     elevation: FloatArray,
     transform: Transform,
     units: str = "degrees",
 ) -> FloatArray:
     """Compute slope from elevation data using Horn's method."""
-    cellsize_x = abs(transform[0])
-    cellsize_y = abs(transform[4])
+    cellsize_x, cellsize_y = _cell_size_meters(transform, elevation.shape[0])
 
     padded = np.pad(elevation, 1, mode="edge")
     padded = np.nan_to_num(padded, nan=0.0)

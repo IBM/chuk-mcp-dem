@@ -2536,16 +2536,19 @@ class TestComputeLandforms:
         assert np.all(result >= 0)
         assert np.all(result <= 8)
 
-    def test_steep_surface_has_escarpments(self, sample_transform):
-        """Checkerboard with extreme variation produces some escarpment (class 4)."""
+    def test_steep_surface_has_escarpments(self):
+        """Steep ramp produces some escarpment (class 4, slope > 30 degrees)."""
+        from rasterio.transform import Affine
+
         from chuk_mcp_dem.core.raster_io import compute_landforms
 
-        # Create extreme elevation differences between adjacent pixels
-        checker = np.zeros((30, 30), dtype=np.float32)
-        checker[::2, ::2] = 1000.0
-        checker[1::2, 1::2] = 1000.0
-        # Alternate rows/cols stay at 0, creating very steep gradients
-        result = compute_landforms(checker, sample_transform)
+        # Use a fine-resolution transform (10m pixels) so that a 500m elevation
+        # ramp across 30 pixels creates very steep slopes (~59 degrees).
+        fine_transform = Affine(0.0001, 0.0, 7.0, 0.0, -0.0001, 47.0)
+        ramp = np.zeros((30, 30), dtype=np.float32)
+        for col in range(30):
+            ramp[:, col] = col * 500.0 / 30  # 0 to ~500m over 30 pixels
+        result = compute_landforms(ramp, fine_transform)
         assert 4 in result  # At least some escarpment pixels
 
 
