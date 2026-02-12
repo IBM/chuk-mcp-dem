@@ -1,14 +1,14 @@
 # chuk-mcp-dem Roadmap
 
-## Current State (v0.6.0)
+## Current State (v0.7.0)
 
-**Working:** 22 tools functional with full DEM discovery, coverage check, fetch, point query, terrain analysis (hillshade/slope/aspect/curvature/TRI/contour/watershed), profile, viewshed, and ML-enhanced terrain analysis (landform classification, anomaly detection, temporal change, feature detection) pipeline.
+**Working:** 23 tools functional with full DEM discovery, coverage check, fetch, point query, terrain analysis (hillshade/slope/aspect/curvature/TRI/contour/watershed), profile, viewshed, ML-enhanced terrain analysis (landform classification, anomaly detection, temporal change, feature detection), and LLM terrain interpretation via MCP sampling.
 
-**Test Stats:** 1167 tests. All checks pass (ruff, mypy, bandit, pytest).
+**Test Stats:** 1205 tests. All checks pass (ruff, mypy, bandit, pytest).
 
 **Infrastructure:** Project scaffold, pyproject.toml, Makefile, CI/CD (GitHub Actions), Dockerfile.
 
-**Implemented:** 6 DEM sources (Copernicus GLO-30/90, SRTM, ASTER, 3DEP, FABDEM), tile URL construction for Copernicus/SRTM/3DEP/FABDEM, multi-tile merging, void filling, point sampling (nearest/bilinear/cubic), hillshade auto-preview, coverage checking, size estimation, LRU tile cache (100 MB), artifact storage via chuk-artifacts, Pydantic v2 response models, dual output mode, terrain derivatives (hillshade/slope/aspect/curvature/TRI/contour/watershed), elevation profiles, viewshed analysis, FABDEM license warnings, LLM input normalization for `dem_fetch_points`, rule-based landform classification, Isolation Forest anomaly detection, temporal elevation change detection, CNN-inspired multi-angle hillshade feature detection.
+**Implemented:** 6 DEM sources (Copernicus GLO-30/90, SRTM, ASTER, 3DEP, FABDEM), tile URL construction for Copernicus/SRTM/3DEP/FABDEM, multi-tile merging, void filling, point sampling (nearest/bilinear/cubic), hillshade auto-preview, coverage checking, size estimation, LRU tile cache (100 MB), artifact storage via chuk-artifacts, Pydantic v2 response models, dual output mode, terrain derivatives (hillshade/slope/aspect/curvature/TRI/contour/watershed), elevation profiles, viewshed analysis, FABDEM license warnings, LLM input normalization for `dem_fetch_points`, rule-based landform classification, Isolation Forest anomaly detection, temporal elevation change detection, CNN-inspired multi-angle hillshade feature detection, LLM terrain interpretation via MCP sampling.
 
 ---
 
@@ -231,35 +231,33 @@ Tier 2 upgrade: the existing 18 tools compute terrain derivatives but don't *rec
 
 ---
 
-## Phase 3.1: Foundation Model Integration (v0.7.0)
+## Phase 3.1: LLM Terrain Interpretation via MCP Sampling (v0.7.0) -- COMPLETE
 
-Tier 3 upgrade: contextual reasoning about terrain. Takes any terrain derivative or analysis output and sends it to a vision-capable LLM for interpretation.
+Tier 3 upgrade: contextual reasoning about terrain. Takes any terrain derivative or analysis output and sends it to the calling LLM via MCP sampling (`sampling/createMessage`) for natural language interpretation.
 
-**Optional dependency:** `pip install chuk-mcp-dem[interpret]` adds chuk-llm. Base install unchanged.
+**No new dependencies.** Uses the MCP SDK's `ServerSession.create_message()` accessible via the `request_ctx` contextvar. The calling LLM (e.g., Claude Desktop) receives the terrain image and returns its interpretation. No chuk-llm or external API keys required.
 
 ### 3.1.1 Terrain Interpretation (1 tool)
 
-- [ ] `dem_interpret` -- send any terrain artifact to a vision model for natural language interpretation
-- [ ] Read artifact from store → render to image if needed → call vision model via chuk-llm → return structured response
-- [ ] `InterpretResponse` Pydantic v2 response model (`interpretation`, `features_identified: list[dict]`, `confidence`, `recommended_next_steps: list[str]`)
-- [ ] `DEMManager.fetch_interpretation()` async method
+- [x] `dem_interpret` -- send any terrain artifact to the client LLM via MCP sampling for interpretation
+- [x] `raster_to_png()` in `raster_io.py` -- converts GeoTIFF or PNG artifact bytes to PNG (passthrough if already PNG)
+- [x] `InterpretResponse` Pydantic v2 response model (`artifact_ref`, `context`, `question`, `interpretation`, `model`, `features_identified`, `message`)
+- [x] `InterpretResult` dataclass and `DEMManager.prepare_for_interpretation()` async method
+- [x] 6 interpretation contexts: general, archaeological_survey, flood_risk, geological, military_history, urban_planning
+- [x] Graceful fallback when MCP client doesn't support sampling (returns helpful error message)
 
-**Parameters:**
+**MCP Sampling Call:** `from mcp.server.lowlevel.server import request_ctx` → `ctx.session.create_message(messages=[ImageContent + TextContent], max_tokens=2000, system_prompt=...)`
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `artifact_ref` | `str` | *required* | Any terrain raster artifact reference |
-| `context` | `str` | `""` | Domain context: `archaeological_survey`, `flood_risk`, `military_history`, `geological` |
-| `question` | `str` | `""` | Specific question about the terrain (e.g. "are there defensive earthworks visible?") |
-
-**Example pipeline:** `dem_fetch` -> `dem_hillshade` -> `dem_detect_anomalies` -> `dem_interpret` -> "Three circular features visible on the south-facing slope, consistent with Bronze Age barrow cemetery. Recommend high-resolution LiDAR survey and STAC multispectral analysis to confirm vegetation stress patterns."
+**Example pipeline:** `dem_fetch` → `dem_hillshade` → `dem_detect_anomalies` → `dem_interpret` → "Three circular features visible on the south-facing slope, consistent with Bronze Age barrow cemetery."
 
 ### 3.1.2 Tests
 
-- [ ] Unit tests for artifact-to-image rendering pipeline
-- [ ] Integration tests with mocked chuk-llm responses
-- [ ] Edge cases: missing artifact, unsupported format, model timeout
-- [ ] Missing `[interpret]` extra (graceful error with install guidance)
+- [x] Unit tests for `raster_to_png()` (PNG passthrough, GeoTIFF conversion, nodata handling)
+- [x] `InterpretResponse` model tests (creation, extra fields rejected, to_text, format_response)
+- [x] `InterpretResult` dataclass tests
+- [x] `prepare_for_interpretation()` tests (success, metadata, missing artifact)
+- [x] Integration tests with mocked MCP sampling (success, text mode, invalid context, sampling unavailable)
+- [x] 1205 tests total, all passing
 
 ---
 
@@ -269,9 +267,9 @@ Tier 3 upgrade: contextual reasoning about terrain. Takes any terrain derivative
 |---------|------|------|
 | `chuk-mcp-dem` | numpy, rasterio, scipy | Tier 1: deterministic compute (18 tools) + feature detection |
 | `chuk-mcp-dem[ml]` | + scikit-learn | Tier 2: recognition (4 tools -- landforms, anomalies, temporal, features) |
-| `chuk-mcp-dem[interpret]` | + chuk-llm | Tier 3: reasoning (1 tool) |
+| *no extra needed* | MCP SDK (already installed) | Tier 3: reasoning (1 tool -- dem_interpret via MCP sampling) |
 
-Note: Feature detection (`dem_detect_features`) uses scipy convolutional filters only -- no torch/torchvision required, no model weight downloads. Anomaly detection (`dem_detect_anomalies`) requires scikit-learn for Isolation Forest. Landform classification and temporal change work with base install.
+Note: Feature detection (`dem_detect_features`) uses scipy convolutional filters only -- no torch/torchvision required, no model weight downloads. Anomaly detection (`dem_detect_anomalies`) requires scikit-learn for Isolation Forest. Landform classification and temporal change work with base install. `dem_interpret` uses MCP sampling (callback to client LLM) -- no additional dependencies, but requires an MCP client that supports `sampling/createMessage`.
 
 ---
 
@@ -304,7 +302,7 @@ Note: Feature detection (`dem_detect_features`) uses scipy convolutional filters
 | 0.5.0 | 2.1 | Watershed + License | +1 tool (watershed), FABDEM license warnings, 993 tests (95% coverage) |
 | 0.5.1 | 2.2 | LLM Robustness | `dem_fetch_points` input normalization, improved schema docstrings, 1006 tests (95% coverage) |
 | 0.6.0 | 3.0 | ML Terrain Analysis | +4 tools (landforms, anomalies, temporal change, feature detection), `[ml]` optional extra, 1167 tests |
-| 0.7.0 | 3.1 | Foundation Model | +1 tool (interpret), chuk-llm integration, `[interpret]` optional extra |
+| 0.7.0 | 3.1 | LLM Interpretation | +1 tool (interpret), MCP sampling, no new deps, 1205 tests |
 
 ---
 

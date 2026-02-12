@@ -1884,3 +1884,111 @@ class TestFeatureDetectionResponse:
         obj = self._make(license_warning="FABDEM warning")
         text = obj.to_text()
         assert "WARNING" in text
+
+
+# ---------------------------------------------------------------------------
+# InterpretResponse (Phase 3.1)
+# ---------------------------------------------------------------------------
+
+
+class TestInterpretResponse:
+    """Tests for InterpretResponse model."""
+
+    def _make(self, **overrides):
+        defaults = dict(
+            artifact_ref="dem/abc123.tif",
+            context="general",
+            question=None,
+            interpretation="The terrain shows a broad valley with gentle slopes.",
+            model="claude-3-opus-20240229",
+            features_identified=["valley", "gentle slopes"],
+            message="Terrain interpretation complete for artifact dem/abc123.tif",
+        )
+        defaults.update(overrides)
+        from chuk_mcp_dem.models.responses import InterpretResponse
+
+        return InterpretResponse(**defaults)
+
+    def test_valid_creation(self):
+        obj = self._make()
+        assert obj.artifact_ref == "dem/abc123.tif"
+        assert obj.context == "general"
+        assert obj.question is None
+        assert "valley" in obj.interpretation
+        assert obj.model == "claude-3-opus-20240229"
+        assert len(obj.features_identified) == 2
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            self._make(bogus_field="nope")
+
+    def test_required_fields_missing(self):
+        with pytest.raises(ValidationError):
+            from chuk_mcp_dem.models.responses import InterpretResponse
+
+            InterpretResponse(artifact_ref="x")  # missing interpretation, model, etc.
+
+    def test_to_text_contains_artifact_ref(self):
+        obj = self._make()
+        text = obj.to_text()
+        assert "dem/abc123.tif" in text
+
+    def test_to_text_contains_context(self):
+        obj = self._make()
+        text = obj.to_text()
+        assert "general" in text
+
+    def test_to_text_contains_interpretation(self):
+        obj = self._make()
+        text = obj.to_text()
+        assert "broad valley" in text
+
+    def test_to_text_with_question(self):
+        obj = self._make(question="What landforms are visible?")
+        text = obj.to_text()
+        assert "Question:" in text
+        assert "What landforms are visible?" in text
+
+    def test_to_text_without_question(self):
+        obj = self._make(question=None)
+        text = obj.to_text()
+        assert "Question:" not in text
+
+    def test_to_text_with_features_identified(self):
+        obj = self._make(features_identified=["ridge", "plateau"])
+        text = obj.to_text()
+        assert "Features identified:" in text
+        assert "ridge" in text
+        assert "plateau" in text
+
+    def test_to_text_without_features_identified(self):
+        obj = self._make(features_identified=[])
+        text = obj.to_text()
+        assert "Features identified:" not in text
+
+    def test_format_response_json(self):
+        obj = self._make()
+        result = format_response(obj, "json")
+        data = json.loads(result)
+        assert data["artifact_ref"] == "dem/abc123.tif"
+        assert data["context"] == "general"
+        assert data["model"] == "claude-3-opus-20240229"
+        assert "valley" in data["interpretation"]
+
+    def test_format_response_text(self):
+        obj = self._make()
+        result = format_response(obj, "text")
+        assert "Terrain Interpretation" in result
+        assert "dem/abc123.tif" in result
+
+    def test_default_features_identified_empty(self):
+        from chuk_mcp_dem.models.responses import InterpretResponse
+
+        obj = InterpretResponse(
+            artifact_ref="ref",
+            context="general",
+            interpretation="Some text",
+            model="test-model",
+            message="done",
+        )
+        assert obj.features_identified == []

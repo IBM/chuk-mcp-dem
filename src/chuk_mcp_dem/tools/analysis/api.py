@@ -18,6 +18,7 @@ from ...constants import (
     DEFAULT_SOURCE,
     DEFAULT_Z_FACTOR,
     FEATURE_METHODS,
+    INTERPRETATION_CONTEXTS,
     INTERPOLATION_METHODS,
     LANDFORM_METHODS,
     MAX_VIEWSHED_RADIUS_M,
@@ -36,6 +37,7 @@ from ...models.responses import (
     ErrorResponse,
     FeatureDetectionResponse,
     HillshadeResponse,
+    InterpretResponse,
     LandformResponse,
     ProfilePointInfo,
     ProfileResponse,
@@ -902,4 +904,170 @@ def register_analysis_tools(mcp, manager):
 
         except Exception as e:
             logger.error(f"dem_detect_features failed: {e}")
+            return format_response(ErrorResponse(error=str(e)), output_mode)
+
+    # ------------------------------------------------------------------
+    # Phase 3.1: LLM terrain interpretation via MCP sampling
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    async def dem_interpret(
+        artifact_ref: str,
+        context: str = "general",
+        question: str = "",
+        output_mode: str = "json",
+    ) -> str:
+        """Interpret a terrain artifact using the calling LLM via MCP sampling.
+
+        Sends a rendered PNG of any terrain artifact to the client LLM for
+        natural language interpretation. The LLM receives the image and a
+        context-specific prompt, then returns its analysis.
+
+        Requires an MCP client that supports the sampling/createMessage
+        capability (e.g., Claude Desktop).
+
+        Available contexts: general, archaeological_survey, flood_risk,
+        geological, military_history, urban_planning.
+
+        Args:
+            artifact_ref: Reference to any stored terrain artifact
+            context: Interpretation context (default "general")
+            question: Optional specific question about the terrain
+            output_mode: "json" or "text"
+
+        Returns:
+            LLM interpretation with identified features
+        """
+        try:
+            # Validate context
+            if context not in INTERPRETATION_CONTEXTS:
+                raise ValueError(
+                    ErrorMessages.INVALID_INTERPRETATION_CONTEXT.format(
+                        context, ", ".join(INTERPRETATION_CONTEXTS)
+                    )
+                )
+
+            # Prepare PNG from artifact
+            try:
+                prep = await manager.prepare_for_interpretation(artifact_ref)
+            except Exception as e:
+                raise ValueError(
+                    ErrorMessages.INVALID_ARTIFACT_REF.format(artifact_ref)
+                ) from e
+
+            # Base64-encode the PNG
+            import base64
+            png_b64 = base64.b64encode(prep.png_bytes).decode()
+
+            # Build system context
+            context_descriptions = {
+                "general": "terrain and elevation analysis",
+                "archaeological_survey": (
+                    "archaeological landscape survey, identifying earthworks, "
+                    "barrows, enclosures, field systems, and anthropogenic terrain "
+                    "modifications"
+                ),
+                "flood_risk": (
+                    "flood risk assessment, identifying drainage channels, "
+                    "flood plains, catchment areas, and vulnerable low-lying terrain"
+                ),
+                "geological": (
+                    "geological analysis, identifying rock formations, fault lines, "
+                    "erosion patterns, and geomorphological processes"
+                ),
+                "military_history": (
+                    "military terrain analysis, identifying defensive positions, "
+                    "line-of-sight advantages, natural barriers, and strategic terrain"
+                ),
+                "urban_planning": (
+                    "urban planning and development, identifying buildable terrain, "
+                    "slope constraints, drainage patterns, and natural hazards"
+                ),
+            }
+            system_prompt = (
+                f"You are a terrain analysis expert specialising in "
+                f"{context_descriptions.get(context, context)}. "
+                f"Analyse the terrain image provided and describe what you observe. "
+                f"Identify notable features, patterns, and any anomalies."
+            )
+
+            # Build user content
+            user_text = "Analyse this terrain image."
+            if question:
+                user_text = question
+
+            # Add metadata context if available
+            meta = prep.artifact_metadata
+            if meta.get("type"):
+                user_text += f"\n\nArtifact type: {meta['type']}"
+            if meta.get("source"):
+                user_text += f", Source: {meta['source']}"
+            if meta.get("bbox"):
+                user_text += f", Bbox: {meta['bbox']}"
+
+            # Call MCP sampling
+            try:
+                from mcp.server.lowlevel.server import request_ctx
+                from mcp.types import (
+                    ImageContent,
+                    SamplingMessage,
+                    TextContent,
+                )
+
+                messages = [
+                    SamplingMessage(
+                        role="user",
+                        content=TextContent(type="text", text=user_text),
+                    ),
+                    SamplingMessage(
+                        role="user",
+                        content=ImageContent(
+                            type="image",
+                            data=png_b64,
+                            mimeType="image/png",
+                        ),
+                    ),
+                ]
+
+                ctx = request_ctx.get()
+                result = await ctx.session.create_message(
+                    messages=messages,
+                    max_tokens=2000,
+                    system_prompt=system_prompt,
+                )
+
+                # Extract text from result
+                interpretation = ""
+                model_name = getattr(result, "model", "unknown")
+                if hasattr(result, "content"):
+                    if isinstance(result.content, str):
+                        interpretation = result.content
+                    elif hasattr(result.content, "text"):
+                        interpretation = result.content.text
+                    elif isinstance(result.content, list):
+                        parts = []
+                        for block in result.content:
+                            if hasattr(block, "text"):
+                                parts.append(block.text)
+                        interpretation = "\n".join(parts)
+
+            except (LookupError, ImportError):
+                return format_response(
+                    ErrorResponse(error=ErrorMessages.SAMPLING_NOT_SUPPORTED),
+                    output_mode,
+                )
+
+            response = InterpretResponse(
+                artifact_ref=artifact_ref,
+                context=context,
+                question=question or None,
+                interpretation=interpretation,
+                model=str(model_name),
+                features_identified=[],
+                message=SuccessMessages.INTERPRET_COMPLETE.format(artifact_ref),
+            )
+            return format_response(response, output_mode)
+
+        except Exception as e:
+            logger.error(f"dem_interpret failed: {e}")
             return format_response(ErrorResponse(error=str(e)), output_mode)

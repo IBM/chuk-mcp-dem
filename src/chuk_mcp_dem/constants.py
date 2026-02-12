@@ -234,6 +234,16 @@ FEATURE_METHODS = ["cnn_hillshade"]
 # Anomaly detection defaults
 DEFAULT_ANOMALY_SENSITIVITY = 0.1  # Isolation Forest contamination parameter
 
+# Interpretation contexts
+INTERPRETATION_CONTEXTS = [
+    "general",
+    "archaeological_survey",
+    "flood_risk",
+    "geological",
+    "military_history",
+    "urban_planning",
+]
+
 # Cache & retry
 TILE_CACHE_MAX_BYTES = 100 * 1024 * 1024  # 100 MB total
 TILE_CACHE_MAX_ITEM = 10 * 1024 * 1024  # 10 MB per item
@@ -292,6 +302,14 @@ class ErrorMessages:
         "Trained models are required but not yet released. "
         "Multi-angle hillshade generation is functional."
     )
+    SAMPLING_NOT_SUPPORTED = (
+        "MCP sampling is not supported by this client. "
+        "dem_interpret requires an MCP client that supports the sampling/createMessage "
+        "capability (e.g., Claude Desktop). The terrain artifact is still available "
+        "at the provided artifact_ref for manual inspection."
+    )
+    INVALID_INTERPRETATION_CONTEXT = "Invalid interpretation context '{}'. Available: {}"
+    INVALID_ARTIFACT_REF = "Artifact '{}' not found or could not be retrieved"
 
 
 class SuccessMessages:
@@ -319,3 +337,4 @@ class SuccessMessages:
     LANDFORM_COMPLETE = "Landforms classified ({} shape, dominant: {})"
     ANOMALY_COMPLETE = "Anomaly detection complete ({} shape, {} anomalies found)"
     FEATURE_DETECT_COMPLETE = "Feature detection complete ({} shape, {} features found)"
+    INTERPRET_COMPLETE = "Terrain interpretation complete for artifact {}"

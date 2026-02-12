@@ -882,3 +882,39 @@ class FeatureDetectionResponse(BaseModel):
         if self.license_warning:
             lines.append(f"WARNING: {self.license_warning}")
         return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3.1: LLM terrain interpretation response
+# ---------------------------------------------------------------------------
+
+
+class InterpretResponse(BaseModel):
+    """Response model for LLM terrain interpretation via MCP sampling."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_ref: str = Field(..., description="The artifact that was interpreted")
+    context: str = Field(..., description="Interpretation context used")
+    question: str | None = Field(None, description="Specific question asked about the terrain")
+    interpretation: str = Field(..., description="The LLM's terrain interpretation")
+    model: str = Field(..., description="Model that generated the interpretation")
+    features_identified: list[str] = Field(
+        default_factory=list, description="Notable features mentioned in interpretation"
+    )
+    message: str = Field(..., description="Operation result message")
+
+    def to_text(self) -> str:
+        lines = [
+            f"Terrain Interpretation ({self.context})",
+            f"Artifact: {self.artifact_ref}",
+            f"Model: {self.model}",
+        ]
+        if self.question:
+            lines.append(f"Question: {self.question}")
+        lines.append("")
+        lines.append(self.interpretation)
+        if self.features_identified:
+            lines.append("")
+            lines.append(f"Features identified: {', '.join(self.features_identified)}")
+        return "\n".join(lines)

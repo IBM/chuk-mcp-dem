@@ -7,12 +7,12 @@ Version 0.1.0
 chuk-mcp-dem is an MCP (Model Context Protocol) server that provides digital
 elevation model (DEM) discovery, retrieval, and terrain analysis.
 
-- **22 tools** for discovering DEM sources, fetching elevation data, computing terrain derivatives, generating profiles/viewsheds, and ML-enhanced terrain analysis
+- **23 tools** for discovering DEM sources, fetching elevation data, computing terrain derivatives, generating profiles/viewsheds, ML-enhanced terrain analysis, and LLM terrain interpretation
 - **Dual output mode** -- all tools return JSON (default) or human-readable text via `output_mode` parameter
 - **Async-first** -- tool entry points are async; sync rasterio I/O runs in thread pools
 - **Pluggable storage** -- raster data stored via chuk-artifacts (memory, filesystem, S3)
 
-All 22 tools are implemented: discovery (4), download (5), terrain analysis (7), profile/viewshed (2), and ML-enhanced analysis (4).
+All 23 tools are implemented: discovery (4), download (5), terrain analysis (7), profile/viewshed (2), ML-enhanced analysis (4), and LLM interpretation (1).
 
 ---
 
@@ -648,6 +648,36 @@ TerrainFeature fields: `bbox`, `area_m2`, `feature_type`, `confidence`.
 
 ---
 
+### LLM Interpretation Tool
+
+#### `dem_interpret`
+
+Send any terrain artifact to the calling LLM via MCP sampling (`sampling/createMessage`) for natural language interpretation. Requires an MCP client that supports sampling (e.g., Claude Desktop). No additional dependencies.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `artifact_ref` | `str` | *required* | Reference to any stored terrain artifact |
+| `context` | `str` | `general` | Interpretation context: `general`, `archaeological_survey`, `flood_risk`, `geological`, `military_history`, `urban_planning` |
+| `question` | `str` | `""` | Optional specific question about the terrain |
+
+**Response:** `InterpretResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `artifact_ref` | `str` | The artifact that was interpreted |
+| `context` | `str` | Interpretation context used |
+| `question` | `str?` | Specific question asked |
+| `interpretation` | `str` | The LLM's terrain interpretation |
+| `model` | `str` | Model that generated the interpretation |
+| `features_identified` | `str[]` | Notable features mentioned |
+| `message` | `str` | Result message |
+
+**MCP Sampling:** The tool converts the artifact to PNG, base64-encodes it, and calls `ServerSession.create_message()` via the MCP SDK `request_ctx` contextvar. If the client doesn't support sampling, a graceful error message is returned suggesting manual inspection of the artifact.
+
+---
+
 ## Build Phases
 
 | Phase | Version | Tools | Focus |
@@ -659,6 +689,7 @@ TerrainFeature fields: `bbox`, `area_m2`, `feature_type`, `confidence`.
 | **2.1** | v0.5.0 | +1 tool | Watershed analysis + FABDEM license warnings |
 | **2.2** | v0.5.1 | -- | LLM input normalization for `dem_fetch_points` |
 | **3.0** | v0.6.0 | +4 tools | ML-enhanced analysis: landforms, anomalies, temporal change, feature detection |
+| **3.1** | v0.7.0 | +1 tool | LLM terrain interpretation via MCP sampling |
 
 ---
 

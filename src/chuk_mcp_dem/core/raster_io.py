@@ -368,6 +368,34 @@ def elevation_to_terrain_png(
     return buf.getvalue()
 
 
+def raster_to_png(data: bytes) -> bytes:
+    """Convert raw artifact bytes (GeoTIFF or PNG) to PNG bytes.
+
+    If the input is already PNG (magic bytes \\x89PNG), returns as-is.
+    If GeoTIFF, reads band 1 with rasterio and applies a terrain colormap.
+
+    Args:
+        data: Raw bytes from artifact store (GeoTIFF or PNG)
+
+    Returns:
+        PNG image bytes
+    """
+    # Check for PNG magic bytes
+    if data[:4] == b"\x89PNG":
+        return data
+
+    # Treat as GeoTIFF — read with rasterio
+    import rasterio
+
+    with rasterio.open(io.BytesIO(data)) as src:
+        band = src.read(1).astype(np.float32)
+        nodata = src.nodata
+        if nodata is not None:
+            band[band == nodata] = np.nan
+
+    return elevation_to_terrain_png(band)
+
+
 def slope_to_png(
     slope: FloatArray,
     units: str = "degrees",

@@ -1701,6 +1701,7 @@ class TestAnalysisToolRegistration:
             "dem_classify_landforms",
             "dem_detect_anomalies",
             "dem_detect_features",
+            "dem_interpret",
         }
         assert set(tools.keys()) == expected
 
@@ -2465,3 +2466,286 @@ class TestDemDetectFeatures:
         result = await tools["dem_detect_features"](bbox=[7.0, 46.0, 8.0, 47.0])
         data = json.loads(result)
         assert "error" in data
+
+
+# ===========================================================================
+# dem_interpret (Phase 3.1)
+# ===========================================================================
+
+
+class TestDemInterpret:
+    """Tests for the dem_interpret tool."""
+
+    def _mock_sampling_result(self, text="The terrain shows a broad valley."):
+        """Create a mock MCP sampling result."""
+        mock_result = MagicMock()
+        mock_result.model = "claude-3-opus-20240229"
+        mock_block = MagicMock()
+        mock_block.text = text
+        mock_result.content = [mock_block]
+        return mock_result
+
+    def _patch_mcp_sampling(self, mock_ctx):
+        """Return a context manager that patches the lazy mcp imports.
+
+        The dem_interpret tool does ``from mcp.server.lowlevel.server import
+        request_ctx`` inside the function body.  We inject mock modules into
+        ``sys.modules`` so that import resolves to our mock.
+        """
+        import sys
+        from unittest.mock import patch
+
+        mock_request_ctx = MagicMock()
+        mock_request_ctx.get.return_value = mock_ctx
+
+        mock_server_mod = MagicMock()
+        mock_server_mod.request_ctx = mock_request_ctx
+
+        mock_types_mod = MagicMock()
+        # The tool imports SamplingMessage, TextContent, ImageContent
+        mock_types_mod.SamplingMessage = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
+        mock_types_mod.TextContent = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
+        mock_types_mod.ImageContent = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
+
+        modules = {
+            "mcp": MagicMock(),
+            "mcp.server": MagicMock(),
+            "mcp.server.lowlevel": MagicMock(),
+            "mcp.server.lowlevel.server": mock_server_mod,
+            "mcp.types": mock_types_mod,
+        }
+        return patch.dict(sys.modules, modules)
+
+    def _patch_mcp_import_error(self):
+        """Return a context manager that makes the mcp import raise ImportError."""
+        import sys
+        from unittest.mock import patch
+
+        # Remove any cached mcp modules so the import fails
+        sentinel = object()
+        modules_to_mask = {
+            k: sentinel
+            for k in list(sys.modules.keys())
+            if k == "mcp" or k.startswith("mcp.")
+        }
+        # Map sentinel → raise ImportError by using None (causes ImportError)
+        blocked = {k: None for k in modules_to_mask}
+        # Also ensure "mcp.server.lowlevel.server" specifically is absent
+        blocked["mcp.server.lowlevel.server"] = None
+        return patch.dict(sys.modules, blocked)
+
+    def _patch_mcp_lookup_error(self, mock_ctx_with_error):
+        """Patch so request_ctx.get() raises LookupError."""
+        import sys
+        from unittest.mock import patch
+
+        mock_request_ctx = MagicMock()
+        mock_request_ctx.get.side_effect = LookupError("no context")
+
+        mock_server_mod = MagicMock()
+        mock_server_mod.request_ctx = mock_request_ctx
+
+        mock_types_mod = MagicMock()
+        mock_types_mod.SamplingMessage = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
+        mock_types_mod.TextContent = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
+        mock_types_mod.ImageContent = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
+
+        modules = {
+            "mcp": MagicMock(),
+            "mcp.server": MagicMock(),
+            "mcp.server.lowlevel": MagicMock(),
+            "mcp.server.lowlevel.server": mock_server_mod,
+            "mcp.types": mock_types_mod,
+        }
+        return patch.dict(sys.modules, modules)
+
+    @pytest.mark.asyncio
+    async def test_json_success(self, analysis_tools):
+        """dem_interpret success path returns valid JSON InterpretResponse."""
+        from chuk_mcp_dem.core.dem_manager import InterpretResult
+
+        tools, manager = analysis_tools
+
+        manager.prepare_for_interpretation = AsyncMock(
+            return_value=InterpretResult(
+                png_bytes=b"\x89PNG fake",
+                artifact_metadata={"type": "hillshade", "source": "cop30"},
+            )
+        )
+
+        mock_ctx = MagicMock()
+        mock_ctx.session.create_message = AsyncMock(
+            return_value=self._mock_sampling_result()
+        )
+
+        with self._patch_mcp_sampling(mock_ctx):
+            result = await tools["dem_interpret"](artifact_ref="dem/abc123.tif")
+
+        data = json.loads(result)
+        assert data["artifact_ref"] == "dem/abc123.tif"
+        assert data["context"] == "general"
+        assert "valley" in data["interpretation"]
+        assert data["model"] == "claude-3-opus-20240229"
+        assert "error" not in data
+
+    @pytest.mark.asyncio
+    async def test_text_output_mode(self, analysis_tools):
+        """dem_interpret with output_mode='text' returns readable text."""
+        from chuk_mcp_dem.core.dem_manager import InterpretResult
+
+        tools, manager = analysis_tools
+
+        manager.prepare_for_interpretation = AsyncMock(
+            return_value=InterpretResult(
+                png_bytes=b"\x89PNG fake",
+                artifact_metadata={},
+            )
+        )
+
+        mock_ctx = MagicMock()
+        mock_ctx.session.create_message = AsyncMock(
+            return_value=self._mock_sampling_result("Ridge system detected.")
+        )
+
+        with self._patch_mcp_sampling(mock_ctx):
+            result = await tools["dem_interpret"](
+                artifact_ref="dem/abc.tif", output_mode="text"
+            )
+
+        assert "Terrain Interpretation" in result
+        assert "Ridge system detected" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_context(self, analysis_tools):
+        """Invalid context returns error response."""
+        tools, _ = analysis_tools
+
+        result = await tools["dem_interpret"](
+            artifact_ref="dem/abc.tif", context="bad_context"
+        )
+        data = json.loads(result)
+        assert "error" in data
+        assert "Invalid interpretation context" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_sampling_not_available_lookup_error(self, analysis_tools):
+        """LookupError from request_ctx.get() returns graceful error."""
+        from chuk_mcp_dem.core.dem_manager import InterpretResult
+
+        tools, manager = analysis_tools
+
+        manager.prepare_for_interpretation = AsyncMock(
+            return_value=InterpretResult(
+                png_bytes=b"\x89PNG fake",
+                artifact_metadata={},
+            )
+        )
+
+        with self._patch_mcp_lookup_error(None):
+            result = await tools["dem_interpret"](artifact_ref="dem/abc.tif")
+
+        data = json.loads(result)
+        assert "error" in data
+        assert "sampling" in data["error"].lower() or "MCP" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_artifact_ref(self, analysis_tools):
+        """If prepare_for_interpretation fails, returns error about artifact."""
+        tools, manager = analysis_tools
+
+        manager.prepare_for_interpretation = AsyncMock(
+            side_effect=FileNotFoundError("not found")
+        )
+
+        result = await tools["dem_interpret"](artifact_ref="dem/missing.tif")
+        data = json.loads(result)
+        assert "error" in data
+        assert "dem/missing.tif" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_empty_question_handled(self, analysis_tools):
+        """Empty string question is handled (no crash, question=None in output)."""
+        from chuk_mcp_dem.core.dem_manager import InterpretResult
+
+        tools, manager = analysis_tools
+
+        manager.prepare_for_interpretation = AsyncMock(
+            return_value=InterpretResult(
+                png_bytes=b"\x89PNG fake",
+                artifact_metadata={},
+            )
+        )
+
+        mock_ctx = MagicMock()
+        mock_ctx.session.create_message = AsyncMock(
+            return_value=self._mock_sampling_result("Analysis complete.")
+        )
+
+        with self._patch_mcp_sampling(mock_ctx):
+            result = await tools["dem_interpret"](
+                artifact_ref="dem/abc.tif", question=""
+            )
+
+        data = json.loads(result)
+        assert data["question"] is None  # empty string converts to None
+        assert "error" not in data
+
+    @pytest.mark.asyncio
+    async def test_with_specific_question(self, analysis_tools):
+        """Specific question is forwarded and appears in output."""
+        from chuk_mcp_dem.core.dem_manager import InterpretResult
+
+        tools, manager = analysis_tools
+
+        manager.prepare_for_interpretation = AsyncMock(
+            return_value=InterpretResult(
+                png_bytes=b"\x89PNG fake",
+                artifact_metadata={"type": "slope"},
+            )
+        )
+
+        mock_ctx = MagicMock()
+        mock_ctx.session.create_message = AsyncMock(
+            return_value=self._mock_sampling_result("Slopes are gentle in the north.")
+        )
+
+        with self._patch_mcp_sampling(mock_ctx):
+            result = await tools["dem_interpret"](
+                artifact_ref="dem/slope.tif",
+                context="geological",
+                question="Where are the steepest slopes?",
+            )
+
+        data = json.loads(result)
+        assert data["question"] == "Where are the steepest slopes?"
+        assert data["context"] == "geological"
+        assert "Slopes are gentle" in data["interpretation"]
+
+    @pytest.mark.asyncio
+    async def test_archaeological_context(self, analysis_tools):
+        """Archaeological survey context is accepted and passed through."""
+        from chuk_mcp_dem.core.dem_manager import InterpretResult
+
+        tools, manager = analysis_tools
+
+        manager.prepare_for_interpretation = AsyncMock(
+            return_value=InterpretResult(
+                png_bytes=b"\x89PNG fake",
+                artifact_metadata={},
+            )
+        )
+
+        mock_ctx = MagicMock()
+        mock_ctx.session.create_message = AsyncMock(
+            return_value=self._mock_sampling_result("Possible earthwork detected.")
+        )
+
+        with self._patch_mcp_sampling(mock_ctx):
+            result = await tools["dem_interpret"](
+                artifact_ref="dem/abc.tif",
+                context="archaeological_survey",
+            )
+
+        data = json.loads(result)
+        assert data["context"] == "archaeological_survey"
+        assert "error" not in data

@@ -178,6 +178,14 @@ class FeatureResult:
     dtype: str
 
 
+@dataclass
+class InterpretResult:
+    """Result of preparing an artifact for LLM interpretation."""
+
+    png_bytes: bytes
+    artifact_metadata: dict
+
+
 class DEMManager:
     """Central manager for DEM data operations."""
 
@@ -1592,6 +1600,43 @@ class DEMManager:
             feature_summary=feature_summary,
             features=features_list,
             dtype="float32",
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 3.1: LLM interpretation support
+    # ------------------------------------------------------------------
+
+    async def prepare_for_interpretation(
+        self,
+        artifact_ref: str,
+    ) -> InterpretResult:
+        """Retrieve an artifact and convert it to PNG for LLM interpretation.
+
+        Args:
+            artifact_ref: Reference to a stored terrain artifact
+
+        Returns:
+            InterpretResult with PNG bytes and artifact metadata
+        """
+        from . import raster_io
+
+        store = self._get_store()
+
+        raw_bytes = await store.retrieve(artifact_ref)
+
+        metadata = {}
+        try:
+            meta = await store.get_metadata(artifact_ref)
+            if meta:
+                metadata = dict(meta)
+        except Exception:
+            pass  # metadata is optional
+
+        png_bytes = await asyncio.to_thread(raster_io.raster_to_png, raw_bytes)
+
+        return InterpretResult(
+            png_bytes=png_bytes,
+            artifact_metadata=metadata,
         )
 
     # ------------------------------------------------------------------

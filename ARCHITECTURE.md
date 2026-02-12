@@ -37,7 +37,7 @@ at server startup, not at module import time.
 
 ### 6. Test Coverage >90% per File, 95%+ Overall
 
-1167 tests across 8 test files.
+1205 tests across 8 test files.
 Every source module maintains at least 78% line coverage (async_server.py,
 which has a short `if __name__` block), with most modules at 95-100%.
 Tests mock at the `DEMManager` level for tool tests, and at the rasterio
@@ -59,7 +59,7 @@ server.py                         # CLI entry point (sync)
   +-- async_server.py             # Async server setup, tool registration
        +-- tools/discovery/api.py       # list_sources, describe_source, status, capabilities
        +-- tools/download/api.py        # fetch, fetch_point, fetch_points, check_coverage, estimate_size
-       +-- tools/analysis/api.py        # hillshade, slope, aspect, curvature, TRI, contour, watershed, profile, viewshed, landforms, anomalies, temporal change, feature detection
+       +-- tools/analysis/api.py        # hillshade, slope, aspect, curvature, TRI, contour, watershed, profile, viewshed, landforms, anomalies, temporal change, feature detection, interpret
        +-- core/dem_manager.py          # Cache, download pipeline, terrain, artifact storage
             +-- core/raster_io.py       # COG reading, merging, sampling, terrain, profile, viewshed, PNG
 
@@ -93,6 +93,7 @@ The central orchestrator. Manages:
 - **Profile extraction**: `fetch_profile()` with haversine distances and gain/loss
 - **Viewshed analysis**: `fetch_viewshed()` with DDA ray-casting visibility
 - **ML-enhanced analysis**: `fetch_landforms()` (rule-based classification), `fetch_anomalies()` (Isolation Forest), `fetch_temporal_change()` (pixel subtraction), `fetch_features()` (CNN-inspired multi-angle hillshade)
+- **LLM interpretation**: `prepare_for_interpretation()` retrieves artifact, converts to PNG
 - **Void filling**: Nearest-neighbour interpolation for NaN pixels
 - **Artifact storage**: `_store_raster()` writes bytes + metadata to chuk-artifacts
 - **Coverage checking**: `check_coverage()` and `estimate_size()` without I/O
@@ -100,7 +101,7 @@ The central orchestrator. Manages:
 
 - **License warnings**: `get_license_warning()` checks for FABDEM non-commercial restrictions
 
-Result dataclasses: `ElevationResult`, `TerrainResult`, `ContourResult`, `ProfileResult`, `ViewshedResult`, `LandformResult`, `AnomalyResult`, `TemporalChangeResult`, `FeatureResult`.
+Result dataclasses: `ElevationResult`, `TerrainResult`, `ContourResult`, `ProfileResult`, `ViewshedResult`, `LandformResult`, `AnomalyResult`, `TemporalChangeResult`, `FeatureResult`, `InterpretResult`.
 
 ### `core/raster_io.py`
 
@@ -122,6 +123,7 @@ Pure I/O layer -- all functions are synchronous (called via `to_thread()`):
 - `arrays_to_geotiff()`: NumPy array to GeoTIFF bytes via MemoryFile
 - `elevation_to_hillshade_png()`: Hillshade preview for auto-preview
 - `elevation_to_terrain_png()`: Terrain-coloured PNG with green-brown-white ramp
+- `raster_to_png()`: Converts GeoTIFF or PNG artifact bytes to PNG (passthrough if already PNG)
 - `slope_to_png()`: Green-yellow-red ramp for slope visualisation
 - `aspect_to_png()`: HSV colour wheel for aspect visualisation
 - `curvature_to_png()`: Diverging blue-white-red ramp for curvature visualisation
@@ -146,7 +148,8 @@ serialisation errors early. Includes `SourcesResponse`, `FetchResponse`,
 `HillshadeResponse`, `SlopeResponse`, `AspectResponse`, `CurvatureResponse`,
 `TRIResponse`, `ContourResponse`, `WatershedResponse`, `ProfilePointInfo`, `ProfileResponse`, `ViewshedResponse`,
 `LandformResponse`, `AnomalyDetectionResponse`, `TerrainAnomaly`,
-`TemporalChangeResponse`, `ChangeRegion`, `FeatureDetectionResponse`, `TerrainFeature`.
+`TemporalChangeResponse`, `ChangeRegion`, `FeatureDetectionResponse`, `TerrainFeature`,
+`InterpretResponse`.
 
 Every response model implements `to_text()` for human-readable output mode.
 Models that accept a `source` parameter include an optional `license_warning` field,
@@ -316,6 +319,29 @@ All Phase 3.0 tools follow the same 5-layer pattern:
         +-- to_thread(raster_io.feature_to_png)            <-- categorical colourmap
         +-- _store_raster()
 ```
+
+### LLM Terrain Interpretation (Phase 3.1)
+
+```
+12. dem_interpret(artifact_ref, context, question)
+    +-- validate context ∈ INTERPRETATION_CONTEXTS
+    +-- manager.prepare_for_interpretation(artifact_ref)
+    |     +-- store.retrieve(artifact_ref)              <-- get raw bytes
+    |     +-- store.get_metadata(artifact_ref)          <-- optional metadata
+    |     +-- to_thread(raster_io.raster_to_png)        <-- GeoTIFF → PNG
+    +-- base64.b64encode(png_bytes)                     <-- for MCP message
+    +-- request_ctx.get().session.create_message(       <-- MCP sampling
+    |     messages=[ImageContent(png), TextContent(question)],
+    |     system_prompt="terrain expert in {context}",
+    |     max_tokens=2000
+    |   )
+    +-- extract interpretation text from result
+    +-- InterpretResponse(interpretation=..., model=..., ...)
+```
+
+Note: If the MCP client doesn't support sampling, `request_ctx.get()` raises
+`LookupError`, which is caught and returns a graceful error suggesting manual
+inspection of the artifact.
 
 ---
 

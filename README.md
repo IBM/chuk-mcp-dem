@@ -6,11 +6,11 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Tests: 1167 passed](https://img.shields.io/badge/tests-1167%20passed-brightgreen.svg)]()
+[![Tests: 1205 passed](https://img.shields.io/badge/tests-1205%20passed-brightgreen.svg)]()
 
 ## Features
 
-This MCP server provides access to global elevation data through 6 DEM sources via 22 tools.
+This MCP server provides access to global elevation data through 6 DEM sources via 23 tools.
 
 **All tools return fully-typed Pydantic v2 models** for type safety, validation, and excellent IDE support. All tools support `output_mode="text"` for human-readable output alongside the default JSON.
 
@@ -171,6 +171,16 @@ CNN-inspired geomorphological feature detection:
 - Morphological cleanup and connected component labelling
 - No torch required -- uses scipy convolutional filters only
 
+### LLM Interpretation Tool
+
+#### 23. Terrain Interpretation (`dem_interpret`)
+Send any terrain artifact to the calling LLM via MCP sampling for interpretation:
+- Converts GeoTIFF or PNG artifacts to images for the LLM
+- 6 interpretation contexts: general, archaeological survey, flood risk, geological, military history, urban planning
+- Optional specific question about the terrain
+- Requires an MCP client that supports sampling (e.g., Claude Desktop)
+- No additional dependencies -- uses the MCP SDK already installed
+
 ## Installation
 
 ### Using uv (Recommended)
@@ -294,6 +304,7 @@ All tools accept an optional `output_mode` parameter (`"json"` default, or `"tex
 | `dem_detect_anomalies` | Anomaly detection (Isolation Forest) | `bbox`, `source`, `sensitivity` |
 | `dem_compare_temporal` | Elevation change detection | `bbox`, `before_source`, `after_source` |
 | `dem_detect_features` | Feature detection (CNN-inspired) | `bbox`, `source`, `method` |
+| `dem_interpret` | LLM terrain interpretation (MCP sampling) | `artifact_ref`, `context`, `question` |
 
 ### dem_fetch
 
@@ -401,7 +412,7 @@ pip install -e ".[dev]"
 ### Running Tests
 
 ```bash
-make test              # Run 1167 tests
+make test              # Run 1205 tests
 make test-cov          # Run tests with coverage
 make coverage-report   # Show coverage report
 ```

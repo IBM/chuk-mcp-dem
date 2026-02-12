@@ -2099,3 +2099,106 @@ class TestPhase3Dataclasses:
         )
         assert r.feature_count == 5
         assert r.feature_summary == {"ridge": 3, "peak": 2}
+
+
+# ===================================================================
+# Phase 3.1: InterpretResult and prepare_for_interpretation
+# ===================================================================
+
+
+class TestPrepareForInterpretation:
+    """Tests for InterpretResult dataclass and prepare_for_interpretation()."""
+
+    def test_interpret_result_creation(self):
+        from chuk_mcp_dem.core.dem_manager import InterpretResult
+
+        result = InterpretResult(
+            png_bytes=b"\x89PNG fake",
+            artifact_metadata={"type": "hillshade", "source": "cop30"},
+        )
+        assert result.png_bytes == b"\x89PNG fake"
+        assert result.artifact_metadata["type"] == "hillshade"
+        assert result.artifact_metadata["source"] == "cop30"
+
+    def test_interpret_result_empty_metadata(self):
+        from chuk_mcp_dem.core.dem_manager import InterpretResult
+
+        result = InterpretResult(png_bytes=b"data", artifact_metadata={})
+        assert result.artifact_metadata == {}
+
+    @pytest.mark.asyncio
+    async def test_prepare_success(self, mock_manager, mock_artifact_store):
+        """prepare_for_interpretation retrieves artifact, converts to PNG."""
+        from unittest.mock import AsyncMock, patch as _patch
+        from chuk_mcp_dem.core.dem_manager import InterpretResult
+
+        # Mock store.retrieve to return fake bytes
+        mock_artifact_store.retrieve = AsyncMock(return_value=b"fake-tiff")
+        mock_artifact_store.get_metadata = AsyncMock(
+            return_value={"type": "hillshade", "source": "cop30"}
+        )
+
+        fake_png = b"\x89PNG fake png bytes"
+        with _patch(
+            "chuk_mcp_dem.core.raster_io.raster_to_png", return_value=fake_png
+        ):
+            result = await mock_manager.prepare_for_interpretation("dem/abc123.tif")
+
+        assert isinstance(result, InterpretResult)
+        assert result.png_bytes == fake_png
+        assert result.artifact_metadata["type"] == "hillshade"
+
+    @pytest.mark.asyncio
+    async def test_prepare_with_metadata(self, mock_manager, mock_artifact_store):
+        """Metadata from artifact store is included in result."""
+        from unittest.mock import AsyncMock, patch as _patch
+
+        mock_artifact_store.retrieve = AsyncMock(return_value=b"data")
+        mock_artifact_store.get_metadata = AsyncMock(
+            return_value={
+                "type": "slope",
+                "source": "cop90",
+                "bbox": [7.0, 46.0, 8.0, 47.0],
+            }
+        )
+
+        with _patch(
+            "chuk_mcp_dem.core.raster_io.raster_to_png", return_value=b"\x89PNG"
+        ):
+            result = await mock_manager.prepare_for_interpretation("dem/slope.tif")
+
+        assert result.artifact_metadata["type"] == "slope"
+        assert result.artifact_metadata["bbox"] == [7.0, 46.0, 8.0, 47.0]
+
+    @pytest.mark.asyncio
+    async def test_prepare_metadata_failure_graceful(
+        self, mock_manager, mock_artifact_store
+    ):
+        """If get_metadata raises, metadata defaults to empty dict."""
+        from unittest.mock import AsyncMock, patch as _patch
+
+        mock_artifact_store.retrieve = AsyncMock(return_value=b"data")
+        mock_artifact_store.get_metadata = AsyncMock(
+            side_effect=Exception("metadata error")
+        )
+
+        with _patch(
+            "chuk_mcp_dem.core.raster_io.raster_to_png", return_value=b"\x89PNG"
+        ):
+            result = await mock_manager.prepare_for_interpretation("dem/abc.tif")
+
+        assert result.artifact_metadata == {}
+
+    @pytest.mark.asyncio
+    async def test_prepare_missing_artifact_raises(
+        self, mock_manager, mock_artifact_store
+    ):
+        """If store.retrieve raises, the error propagates."""
+        from unittest.mock import AsyncMock
+
+        mock_artifact_store.retrieve = AsyncMock(
+            side_effect=FileNotFoundError("not found")
+        )
+
+        with pytest.raises(FileNotFoundError, match="not found"):
+            await mock_manager.prepare_for_interpretation("dem/missing.tif")

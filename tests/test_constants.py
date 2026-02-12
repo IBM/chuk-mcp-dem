@@ -683,3 +683,58 @@ class TestPhase3SuccessMessages:
     def test_feature_detect_complete_format(self):
         msg = SuccessMessages.FEATURE_DETECT_COMPLETE.format("100x100", 3)
         assert "100x100" in msg and "3" in msg
+
+
+# ── Phase 3.1: Interpretation constants ────────────────────────────
+
+
+class TestInterpretationContexts:
+    """Tests for INTERPRETATION_CONTEXTS list."""
+
+    def test_has_expected_entries(self):
+        from chuk_mcp_dem.constants import INTERPRETATION_CONTEXTS
+
+        assert "general" in INTERPRETATION_CONTEXTS
+        assert "archaeological_survey" in INTERPRETATION_CONTEXTS
+        assert "flood_risk" in INTERPRETATION_CONTEXTS
+        assert "geological" in INTERPRETATION_CONTEXTS
+        assert "military_history" in INTERPRETATION_CONTEXTS
+        assert "urban_planning" in INTERPRETATION_CONTEXTS
+
+    def test_has_six_entries(self):
+        from chuk_mcp_dem.constants import INTERPRETATION_CONTEXTS
+
+        assert len(INTERPRETATION_CONTEXTS) == 6
+
+    def test_general_is_first(self):
+        from chuk_mcp_dem.constants import INTERPRETATION_CONTEXTS
+
+        assert INTERPRETATION_CONTEXTS[0] == "general"
+
+
+class TestPhase31ErrorMessages:
+    """Tests for Phase 3.1 error message format strings."""
+
+    def test_invalid_interpretation_context_format(self):
+        msg = ErrorMessages.INVALID_INTERPRETATION_CONTEXT.format(
+            "bad_ctx", "general, archaeological_survey"
+        )
+        assert "bad_ctx" in msg
+        assert "general, archaeological_survey" in msg
+
+    def test_invalid_artifact_ref_format(self):
+        msg = ErrorMessages.INVALID_ARTIFACT_REF.format("ref/missing123")
+        assert "ref/missing123" in msg
+
+    def test_sampling_not_supported_mentions_mcp(self):
+        assert "MCP" in ErrorMessages.SAMPLING_NOT_SUPPORTED
+        assert "sampling" in ErrorMessages.SAMPLING_NOT_SUPPORTED.lower()
+
+
+class TestPhase31SuccessMessages:
+    """Tests for Phase 3.1 success message format strings."""
+
+    def test_interpret_complete_format(self):
+        msg = SuccessMessages.INTERPRET_COMPLETE.format("dem/abc123.tif")
+        assert "dem/abc123.tif" in msg
+        assert "interpretation" in msg.lower() or "Terrain" in msg

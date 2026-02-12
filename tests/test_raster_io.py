@@ -2797,3 +2797,76 @@ class TestFeatureToPng:
         assert isinstance(result, bytes)
         assert len(result) > 0
 
+
+# ---------------------------------------------------------------------------
+# raster_to_png
+# ---------------------------------------------------------------------------
+
+
+class TestRasterToPng:
+    """Tests for raster_to_png() -- convert artifact bytes to PNG."""
+
+    def test_png_passthrough(self):
+        """If input already starts with PNG magic bytes, return as-is."""
+        from chuk_mcp_dem.core.raster_io import raster_to_png
+
+        # Create a real PNG
+        img = Image.new("L", (4, 4), 128)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+
+        assert png_bytes[:4] == b"\x89PNG"  # sanity
+        result = raster_to_png(png_bytes)
+        assert result is png_bytes  # exact same object, returned as-is
+
+    def test_geotiff_conversion_produces_png(self):
+        """GeoTIFF bytes are converted to PNG via rasterio."""
+        from chuk_mcp_dem.core.raster_io import raster_to_png
+
+        # Mock rasterio.open to return a fake dataset
+        fake_band = np.random.uniform(100, 500, (20, 20)).astype(np.float32)
+        mock_src = MagicMock()
+        mock_src.read.return_value = fake_band
+        mock_src.nodata = None
+        mock_src.__enter__ = MagicMock(return_value=mock_src)
+        mock_src.__exit__ = MagicMock(return_value=False)
+
+        # Input that does NOT start with PNG magic (simulating GeoTIFF)
+        fake_tiff_bytes = b"\x49\x49\x2a\x00" + b"\x00" * 100  # TIFF magic
+
+        with patch("rasterio.open", return_value=mock_src):
+            result = raster_to_png(fake_tiff_bytes)
+
+        assert isinstance(result, bytes)
+        assert result[:4] == b"\x89PNG"
+
+    def test_geotiff_with_nodata_replaces_nan(self):
+        """GeoTIFF with nodata values should replace them with NaN before rendering."""
+        from chuk_mcp_dem.core.raster_io import raster_to_png
+
+        band = np.full((10, 10), 200.0, dtype=np.float32)
+        band[0, 0] = -9999.0  # nodata pixel
+
+        mock_src = MagicMock()
+        mock_src.read.return_value = band
+        mock_src.nodata = -9999.0
+        mock_src.__enter__ = MagicMock(return_value=mock_src)
+        mock_src.__exit__ = MagicMock(return_value=False)
+
+        fake_tiff_bytes = b"\x49\x49\x2a\x00" + b"\x00" * 100
+
+        with patch("rasterio.open", return_value=mock_src):
+            result = raster_to_png(fake_tiff_bytes)
+
+        assert isinstance(result, bytes)
+        assert result[:4] == b"\x89PNG"
+
+    def test_empty_data_raises(self):
+        """Empty or invalid data should raise an error through rasterio."""
+        from chuk_mcp_dem.core.raster_io import raster_to_png
+
+        with patch("rasterio.open", side_effect=Exception("Cannot read")):
+            with pytest.raises(Exception, match="Cannot read"):
+                raster_to_png(b"")
+
