@@ -1,6 +1,6 @@
 # chuk-mcp-dem Roadmap
 
-## Current State (v0.7.0)
+## Current State (v0.2.2)
 
 **Working:** 25 tools functional with full DEM discovery, coverage check, fetch, point query, terrain analysis (hillshade/slope/aspect/curvature/TRI/contour/watershed), profile, viewshed, interactive view tools (profile chart, map), ML-enhanced terrain analysis (landform classification, anomaly detection, temporal change, feature detection), and LLM terrain interpretation via MCP sampling.
 
@@ -336,17 +336,11 @@ Note: Feature detection (`dem_detect_features`) uses scipy convolutional filters
 
 ## Version Summary
 
-| Version | Phase | Focus | Key Deliverables |
-|---------|-------|-------|------------------|
-| 0.1.0 | 1.0 | Core Fetch | 9 tools, 6 sources, 596 tests (97% coverage), tile cache, auto-preview, CI/CD |
-| 0.2.0 | 1.1 | Terrain Analysis | +5 tools (hillshade, slope, aspect, curvature, TRI), terrain PNG output |
-| 0.3.0 | 1.2 | Advanced | +2 tools (profile, viewshed), haversine distance, DDA ray-casting, 883 tests (95% coverage) |
-| 0.4.0 | 1.2+2.0 | Contour + Sources | +1 tool (contour), SRTM/3DEP/FABDEM download integration, 932 tests (95% coverage) |
-| 0.5.0 | 2.1 | Watershed + License | +1 tool (watershed), FABDEM license warnings, 993 tests (95% coverage) |
-| 0.5.1 | 2.2 | LLM Robustness | `dem_fetch_points` input normalization, improved schema docstrings, 1006 tests (95% coverage) |
-| 0.6.0 | 3.0 | ML Terrain Analysis | +4 tools (landforms, anomalies, temporal change, feature detection), `[ml]` optional extra, 1167 tests |
-| 0.7.0 | 3.1 | LLM Interpretation | +1 tool (interpret), MCP sampling, no new deps, 1205 tests |
-| 0.2.2 | 3.2 | Interactive View Tools | +2 tools (profile_chart, map), chuk-view-schemas, TOOL_COUNT constant, 1231 tests |
+| Version | Key Deliverables |
+|---------|------------------|
+| 0.2 | Initial release: 23 tools across all phases 1.0–3.1. DEM discovery, download (6 sources), terrain derivatives, profile, viewshed, contour, watershed, ML terrain analysis (landforms/anomalies/temporal/features), LLM interpretation via MCP sampling. 1205 tests. |
+| 0.2.1 | Minor fixes: Renovate config, version bump. |
+| 0.2.2 | Interactive view tools (phases 3.2): `dem_profile_chart` + `dem_map` via `chuk-view-schemas`, `TOOL_COUNT` constant, CDN/SSR timeout fix (`chuk-mcp-server>=0.25.2`). 1231 tests. |
 
 ---
 
