@@ -117,13 +117,13 @@
 ### 2.0.2 3DEP Download Integration
 
 - [x] 3DEP tile URL construction (USGS S3 1/3 arc-second)
-- [ ] Multi-resolution support (1m, 3m, 10m, 30m) -- future enhancement
+- [ ] Multi-resolution support (1m, 3m, 10m, 30m) -- Phase 4.1
 - [x] US-only coverage validation
 
 ### 2.0.3 FABDEM Download Integration
 
 - [x] FABDEM tile access (Bristol University public endpoint)
-- [ ] Bare-earth vs DSM comparison capability -- future enhancement
+- [ ] Bare-earth vs DSM comparison capability -- Phase 4.1
 - [x] Non-commercial license warning on all FABDEM responses
 
 ### 2.0.4 ASTER
@@ -304,6 +304,115 @@ Tier 1 upgrade: rich UI rendering for MCP clients that support `view_tool` (e.g.
 
 ---
 
+## Phase 4.0: Export & Interoperability (v0.3.0)
+
+Make terrain analysis outputs usable outside the MCP client — drop into GIS tools, Python workflows, or spreadsheets without copy-pasting JSON.
+
+### 4.0.1 Profile Export (1–2 tools)
+
+- [ ] `dem_profile_export` -- export an elevation profile as CSV or GeoJSON LineString with elevation as a property
+  - CSV: `distance_m,elevation_m` rows, importable into Excel/pandas/R
+  - GeoJSON: LineString with `elevation_m` property per vertex, loadable in QGIS/ArcGIS/Mapbox
+  - Reuses existing `fetch_profile()` compute path; adds format argument
+- [ ] Optionally fold into `dem_profile` as an `output_format` parameter rather than a separate tool
+
+### 4.0.2 Contour Export
+
+- [ ] `dem_contour_export` -- export contour lines as GeoJSON FeatureCollection (each contour = a LineString with `elevation_m` property)
+  - Extends existing `compute_contours()` output to GeoJSON instead of PNG-only
+  - Directly importable into any GIS tool
+
+### 4.0.3 Tests & Examples
+
+- [ ] Export format validation tests (CSV structure, GeoJSON schema)
+- [ ] Round-trip tests: export → reimport matches original data
+- [ ] `export_demo.py` -- profile + contour export for a mountain transect
+
+---
+
+## Phase 4.1: Extended Sources & Resolution (v0.3.1)
+
+Expand the data sources available to all existing tools — more coverage, higher resolution, and seamless land+sea analysis.
+
+### 4.1.1 GEBCO Bathymetry (1 new source)
+
+- [ ] Add `gebco` as a 7th DEM source in `constants.py` with full metadata
+- [ ] `_make_tile_url()` extension for GEBCO 2023 grid (public, no credentials)
+- [ ] Seamless land+sea profiles: `dem_profile_chart` works across coastlines
+- [ ] `dem_list_sources` / `dem_describe_source` updated to include GEBCO
+- [ ] `dem_check_coverage` for GEBCO (global ocean coverage)
+- [ ] Example: coastal cliff → seabed cross-section profile
+
+### 4.1.2 Multi-Resolution 3DEP
+
+- [ ] Support 1m, 3m, 10m, 30m 3DEP products (currently only 1/3 arc-second ~10m)
+- [ ] `resolution` parameter on 3DEP tile URL construction
+- [ ] 1m product is LiDAR-derived -- highest-resolution public DEM for the US
+- [ ] All terrain tools benefit: sub-metre viewshed, building-level slope, fine anomaly detection
+
+### 4.1.3 Bare-Earth vs DSM Comparison (1 tool)
+
+- [ ] `dem_compare_surfaces` -- diff FABDEM (bare-earth) vs cop30 (surface) for the same bbox
+- [ ] Output: canopy/building height raster (DSM − DTM = nDSM)
+- [ ] `ndsm_to_png()` -- green ramp for vegetation height, grey for built structures
+- [ ] Useful for: urban density, forestry canopy height, flood plain modelling
+- [ ] Extends `compute_elevation_change()` with a source-pair shortcut
+
+### 4.1.4 Tests & Examples
+
+- [ ] GEBCO tile URL tests, coverage validation
+- [ ] 3DEP multi-resolution tile URL tests
+- [ ] `dem_compare_surfaces` unit + integration tests
+- [ ] `coastal_profile_demo.py` -- GEBCO + cop30 seamless land/sea profile
+- [ ] `urban_canopy_demo.py` -- FABDEM vs cop30 nDSM for a city centre
+
+---
+
+## Phase 4.2: ML Upgrades (v0.4.0)
+
+Improve the accuracy of anomaly detection for subtle anthropogenic and archaeological features.
+
+### 4.2.1 Autoencoder Anomaly Detection
+
+- [ ] Replace (or offer alongside) Isolation Forest in `dem_detect_anomalies` with a convolutional autoencoder
+- [ ] Trained on natural terrain patches; reconstruction error = anomaly score
+- [ ] Catches subtle linear features (old roads, field boundaries, buried earthworks) that Isolation Forest misses
+- [ ] Model weights bundled as a small (~5 MB) download on first use via `[ml]` extra
+- [ ] `backend` parameter: `"isolation_forest"` (default, no download) or `"autoencoder"` (higher sensitivity)
+- [ ] No torch required -- implement with numpy/scipy or small ONNX runtime
+
+### 4.2.2 Tests & Examples
+
+- [ ] Autoencoder backend unit tests (model load, inference shape, score range)
+- [ ] Comparison demo: Isolation Forest vs autoencoder on same archaeological site
+
+---
+
+## Phase 4.3: Planetary DEMs (v0.5.0)
+
+Apply all existing terrain tools to extraterrestrial surfaces. No credential changes — both are public PDS archives.
+
+### 4.3.1 Mars MOLA
+
+- [ ] Add `mars_mola` as a source in `constants.py` (NASA PDS, public)
+- [ ] MOLA MEGDR tile URL construction (128 pixels/degree, ~463m resolution)
+- [ ] CRS handling: Mars 2000 ellipsoid (different radius, no WGS84)
+- [ ] All terrain tools work unchanged: hillshade, slope, profile, anomaly detection on Martian terrain
+
+### 4.3.2 Moon LOLA
+
+- [ ] Add `moon_lola` as a source (NASA PDS, public)
+- [ ] LOLA gridded DEM tile URL construction (~118m resolution near equator)
+- [ ] Selenographic CRS handling
+
+### 4.3.3 Tests & Examples
+
+- [ ] Planetary tile URL tests (coordinate wrapping, CRS metadata)
+- [ ] `olympus_mons_demo.py` -- hillshade + profile of Olympus Mons (Mars)
+- [ ] `tycho_crater_demo.py` -- viewshed analysis from Tycho crater rim (Moon)
+
+---
+
 ## Dependency Tiers
 
 | Install | Adds | Tier |
@@ -317,13 +426,6 @@ Note: Feature detection (`dem_detect_features`) uses scipy convolutional filters
 ---
 
 ## Future Considerations
-
-### Potential Features
-
-- **Bathymetry**: GEBCO ocean depth data as an additional source
-- **Planetary DEMs**: Mars MOLA, Moon LOLA via PDS archives
-- **Cross-section export**: Export profiles as CSV/GeoJSON for external tools
-- **Autoencoder anomaly detection**: Replace Isolation Forest with trained autoencoder for higher sensitivity (v2.0 upgrade path for `dem_detect_anomalies`)
 
 ### Not in Scope (for now)
 
@@ -340,7 +442,11 @@ Note: Feature detection (`dem_detect_features`) uses scipy convolutional filters
 |---------|------------------|
 | 0.2 | Initial release: 23 tools across all phases 1.0–3.1. DEM discovery, download (6 sources), terrain derivatives, profile, viewshed, contour, watershed, ML terrain analysis (landforms/anomalies/temporal/features), LLM interpretation via MCP sampling. 1205 tests. |
 | 0.2.1 | Minor fixes: Renovate config, version bump. |
-| 0.2.2 | Interactive view tools (phases 3.2): `dem_profile_chart` + `dem_map` via `chuk-view-schemas`, `TOOL_COUNT` constant, CDN/SSR timeout fix (`chuk-mcp-server>=0.25.2`). 1231 tests. |
+| 0.2.2 | Interactive view tools (phase 3.2): `dem_profile_chart` + `dem_map` via `chuk-view-schemas`, `TOOL_COUNT` constant, CDN/SSR timeout fix (`chuk-mcp-server>=0.25.2`). 1231 tests. |
+| 0.3.0 | Phase 4.0: Profile + contour GeoJSON/CSV export. |
+| 0.3.1 | Phase 4.1: GEBCO bathymetry source, multi-resolution 3DEP, bare-earth vs DSM comparison. |
+| 0.4.0 | Phase 4.2: Autoencoder anomaly detection backend (`[ml]` tier upgrade). |
+| 0.5.0 | Phase 4.3: Planetary DEMs — Mars MOLA + Moon LOLA via NASA PDS. |
 
 ---
 
