@@ -458,7 +458,7 @@ wheels = [
 
 [[package]]
 name = "chuk-mcp-dem"
-version = "0.2"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "chuk-artifacts" },

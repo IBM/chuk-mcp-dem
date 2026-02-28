@@ -112,9 +112,7 @@ def main() -> None:
         default=None,
         help="Transport mode (stdio for Claude Desktop, http for API)",
     )
-    parser.add_argument(
-        "--host", default="localhost", help="Host for HTTP mode (default: localhost)"
-    )
+    parser.add_argument("--host", default="0.0.0.0", help="Host for HTTP mode (default: 0.0.0.0)")  # nosec B104
     parser.add_argument("--port", type=int, default=8003, help="Port for HTTP mode (default: 8003)")
 
     args = parser.parse_args()

@@ -488,7 +488,7 @@ class TestMainHttpMode:
                 with patch("sys.argv", ["server", "http"]):
                     server.main()
 
-        mock_mcp.run.assert_called_once_with(host="localhost", port=8003, stdio=False)
+        mock_mcp.run.assert_called_once_with(host="0.0.0.0", port=8003, stdio=False)
 
     def test_default_port_is_8003(self, clean_server_import):
         """Verify the argparse default for --port is 8003."""
@@ -568,7 +568,7 @@ class TestMainAutoDetect:
                     mock_stdin.isatty.return_value = True
                     server.main()
 
-        mock_mcp.run.assert_called_once_with(host="localhost", port=8003, stdio=False)
+        mock_mcp.run.assert_called_once_with(host="0.0.0.0", port=8003, stdio=False)
 
     def test_auto_detect_http_respects_custom_host_port(self, clean_server_import):
         """Auto-detect HTTP mode should honour --host and --port flags."""

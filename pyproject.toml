@@ -1,6 +1,6 @@
 [project]
 name = "chuk-mcp-dem"
-version = "0.2"
+version = "0.2.1"
 description = "Digital Elevation Model Discovery, Retrieval & Terrain Analysis MCP Server"
 authors = []
 license = { text = "Apache-2.0" }

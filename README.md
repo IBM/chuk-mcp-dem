@@ -200,6 +200,22 @@ Send any terrain artifact to the calling LLM via MCP sampling for interpretation
 - Requires an MCP client that supports sampling (e.g., Claude Desktop)
 - No additional dependencies -- uses the MCP SDK already installed
 
+## Public Server
+
+A hosted instance is available at `https://dem.chukai.io/mcp` — no installation required.
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "dem": {
+      "url": "https://dem.chukai.io/mcp"
+    }
+  }
+}
+```
+
 ## Installation
 
 ### Using uv (Recommended)
