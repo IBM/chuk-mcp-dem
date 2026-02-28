@@ -27,13 +27,22 @@ from chuk_mcp_dem.tools.download import register_download_tools
 
 
 class _MiniMCP:
-    """Minimal MCP server that captures tools registered via @mcp.tool."""
+    """Minimal MCP server that captures tools registered via @mcp.tool or @mcp.view_tool."""
 
     def __init__(self) -> None:
         self._tools: dict[str, Any] = {}
 
     def tool(self) -> Any:
         """Decorator factory matching @mcp.tool() usage."""
+
+        def decorator(fn: Any) -> Any:
+            self._tools[fn.__name__] = fn
+            return fn
+
+        return decorator
+
+    def view_tool(self, **kwargs: Any) -> Any:
+        """Decorator factory matching @profile_tool/@map_tool usage (chuk_view_schemas)."""
 
         def decorator(fn: Any) -> Any:
             self._tools[fn.__name__] = fn
@@ -66,10 +75,11 @@ class ToolRunner:
     """
     Run chuk-mcp-dem MCP tools directly from Python.
 
-    All 22 tools are registered and callable via run(tool_name, **kwargs).
+    All 25 tools are registered and callable via run(tool_name, **kwargs).
     Returns parsed JSON (dict/list) by default. Use run_text() for
-    human-readable output. An in-memory artifact store is initialized
-    automatically.
+    human-readable output. View tools (dem_profile_chart, dem_map) return
+    {"structuredContent": {...}} dicts directly. An in-memory artifact store
+    is initialized automatically.
     """
 
     def __init__(self) -> None:
@@ -85,9 +95,13 @@ class ToolRunner:
         return list(self._mcp._tools.keys())
 
     async def run(self, tool_name: str, **kwargs: Any) -> dict[str, Any]:
-        """Call a tool by name and return parsed JSON."""
+        """Call a tool by name and return parsed JSON or structured content dict."""
         fn = self._mcp.get_tool(tool_name)
         raw = await fn(**kwargs)
+        # View tools (dem_profile_chart, dem_map) return dicts directly.
+        # Regular tools return JSON strings.
+        if isinstance(raw, dict):
+            return raw
         return json.loads(raw)
 
     async def run_text(self, tool_name: str, **kwargs: Any) -> str:

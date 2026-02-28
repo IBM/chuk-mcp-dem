@@ -37,7 +37,7 @@ at server startup, not at module import time.
 
 ### 6. Test Coverage >90% per File, 95%+ Overall
 
-1205 tests across 8 test files.
+1231 tests across 8 test files.
 Every source module maintains at least 78% line coverage (async_server.py,
 which has a short `if __name__` block), with most modules at 95-100%.
 Tests mock at the `DEMManager` level for tool tests, and at the rasterio
@@ -59,12 +59,16 @@ server.py                         # CLI entry point (sync)
   +-- async_server.py             # Async server setup, tool registration
        +-- tools/discovery/api.py       # list_sources, describe_source, status, capabilities
        +-- tools/download/api.py        # fetch, fetch_point, fetch_points, check_coverage, estimate_size
-       +-- tools/analysis/api.py        # hillshade, slope, aspect, curvature, TRI, contour, watershed, profile, viewshed, landforms, anomalies, temporal change, feature detection, interpret
+       +-- tools/analysis/api.py        # hillshade, slope, aspect, curvature, TRI, contour, watershed,
+       |                                # profile, viewshed, landforms, anomalies, temporal change,
+       |                                # feature detection, interpret
+       |                                # view tools: profile_chart (@profile_tool), map (@map_tool)
        +-- core/dem_manager.py          # Cache, download pipeline, terrain, artifact storage
             +-- core/raster_io.py       # COG reading, merging, sampling, terrain, profile, viewshed, PNG
 
 models/responses.py               # Pydantic response models (extra="forbid")
 constants.py                      # Source metadata, cache limits, error messages
+chuk_view_schemas                 # External: MapContent, MapLayer, LayerStyle and view tool decorators
 ```
 
 ---
@@ -330,7 +334,7 @@ All Phase 3.0 tools follow the same 5-layer pattern:
     |     +-- store.get_metadata(artifact_ref)          <-- optional metadata
     |     +-- to_thread(raster_io.raster_to_png)        <-- GeoTIFF → PNG
     +-- base64.b64encode(png_bytes)                     <-- for MCP message
-    +-- request_ctx.get().session.create_message(       <-- MCP sampling
+    +-- chuk_mcp_server.context.create_message(         <-- MCP sampling
     |     messages=[ImageContent(png), TextContent(question)],
     |     system_prompt="terrain expert in {context}",
     |     max_tokens=2000
@@ -339,9 +343,32 @@ All Phase 3.0 tools follow the same 5-layer pattern:
     +-- InterpretResponse(interpretation=..., model=..., ...)
 ```
 
-Note: If the MCP client doesn't support sampling, `request_ctx.get()` raises
-`LookupError`, which is caught and returns a graceful error suggesting manual
-inspection of the artifact.
+Note: If the MCP client doesn't support sampling, `create_message()` raises
+`RuntimeError`, which is caught and returns a graceful `ErrorResponse` suggesting
+manual inspection of the artifact.
+
+### View Tools (Phase 3.2)
+
+View tools use `@profile_tool` / `@map_tool` decorators from `chuk_view_schemas.chuk_mcp`
+instead of `@mcp.tool()`. They return typed view content models rather than JSON strings,
+and exceptions propagate (the MCP framework returns a protocol-level error) instead of
+being converted to `ErrorResponse`. Validation still runs before any computation.
+
+```
+13. dem_profile_chart(start, end, source, num_points, interpolation)
+    +-- validate num_points >= 2, interpolation ∈ INTERPOLATION_METHODS
+    +-- manager.fetch_profile()                        <-- reuses profile pipeline
+    +-- build ProfilePoint(x=distance_m, y=elevation_m) per sample (skip NaN)
+    +-- return ProfileContent(title, x_label, y_label, fill, points)
+    |     serialised to structuredContent by @profile_tool wrapper (model_dump by_alias)
+
+14. dem_map(bbox, source, basemap)
+    +-- validate bbox geometry, basemap ∈ BASEMAP_OPTIONS
+    +-- compute center lat/lon and zoom from bbox extents  <-- pure geometry, no I/O
+    +-- build GeoJSON FeatureCollection (Polygon from bbox corners)
+    +-- MapContent(center, zoom, basemap, layers=[MapLayer(features=geojson)])
+          serialised to structuredContent by @map_tool wrapper
+```
 
 ---
 

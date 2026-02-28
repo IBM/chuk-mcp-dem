@@ -710,15 +710,9 @@ class TemporalChangeResponse(BaseModel):
     crs: str = Field(..., description="Coordinate reference system")
     resolution_m: float = Field(..., description="Output resolution in metres")
     shape: list[int] = Field(..., description="Array shape [height, width]")
-    significance_threshold_m: float = Field(
-        ..., description="Significance threshold in metres"
-    )
-    volume_gained_m3: float = Field(
-        ..., description="Total volume of elevation gain in m^3"
-    )
-    volume_lost_m3: float = Field(
-        ..., description="Total volume of elevation loss in m^3"
-    )
+    significance_threshold_m: float = Field(..., description="Significance threshold in metres")
+    volume_gained_m3: float = Field(..., description="Total volume of elevation gain in m^3")
+    volume_lost_m3: float = Field(..., description="Total volume of elevation loss in m^3")
     significant_regions: list[ChangeRegion] = Field(
         ..., description="List of significant change regions"
     )
@@ -808,9 +802,7 @@ class AnomalyResponse(BaseModel):
     resolution_m: float = Field(..., description="Output resolution in metres")
     shape: list[int] = Field(..., description="Array shape [height, width]")
     sensitivity: float = Field(..., description="Detection sensitivity parameter")
-    anomaly_count: int = Field(
-        ..., description="Number of anomalous regions detected", ge=0
-    )
+    anomaly_count: int = Field(..., description="Number of anomalous regions detected", ge=0)
     anomalies: list[TerrainAnomaly] = Field(..., description="Detected anomalies")
     output_format: str = Field(..., description="Output format (geotiff or png)")
     license_warning: str | None = Field(None, description="License restriction warning")
@@ -840,7 +832,9 @@ class TerrainFeature(BaseModel):
 
     bbox: list[float] = Field(..., description="Bounding box [west, south, east, north]")
     area_m2: float = Field(..., description="Feature area in square metres")
-    feature_type: str = Field(..., description="Feature type: peak, ridge, valley, cliff, saddle, channel")
+    feature_type: str = Field(
+        ..., description="Feature type: peak, ridge, valley, cliff, saddle, channel"
+    )
     confidence: float = Field(..., description="Detection confidence (0-1)", ge=0, le=1)
 
 
@@ -858,9 +852,7 @@ class FeatureDetectionResponse(BaseModel):
     resolution_m: float = Field(..., description="Output resolution in metres")
     shape: list[int] = Field(..., description="Array shape [height, width]")
     feature_count: int = Field(..., description="Number of features detected", ge=0)
-    feature_summary: dict[str, int] = Field(
-        ..., description="Count of each feature type detected"
-    )
+    feature_summary: dict[str, int] = Field(..., description="Count of each feature type detected")
     features: list[TerrainFeature] = Field(..., description="Detected terrain features")
     output_format: str = Field(..., description="Output format (geotiff or png)")
     license_warning: str | None = Field(None, description="License restriction warning")

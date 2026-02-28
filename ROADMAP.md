@@ -2,13 +2,13 @@
 
 ## Current State (v0.7.0)
 
-**Working:** 23 tools functional with full DEM discovery, coverage check, fetch, point query, terrain analysis (hillshade/slope/aspect/curvature/TRI/contour/watershed), profile, viewshed, ML-enhanced terrain analysis (landform classification, anomaly detection, temporal change, feature detection), and LLM terrain interpretation via MCP sampling.
+**Working:** 25 tools functional with full DEM discovery, coverage check, fetch, point query, terrain analysis (hillshade/slope/aspect/curvature/TRI/contour/watershed), profile, viewshed, interactive view tools (profile chart, map), ML-enhanced terrain analysis (landform classification, anomaly detection, temporal change, feature detection), and LLM terrain interpretation via MCP sampling.
 
-**Test Stats:** 1205 tests. All checks pass (ruff, mypy, bandit, pytest).
+**Test Stats:** 1231 tests. All checks pass (ruff, mypy, bandit, pytest).
 
 **Infrastructure:** Project scaffold, pyproject.toml, Makefile, CI/CD (GitHub Actions), Dockerfile.
 
-**Implemented:** 6 DEM sources (Copernicus GLO-30/90, SRTM, ASTER, 3DEP, FABDEM), tile URL construction for Copernicus/SRTM/3DEP/FABDEM, multi-tile merging, void filling, point sampling (nearest/bilinear/cubic), hillshade auto-preview, coverage checking, size estimation, LRU tile cache (100 MB), artifact storage via chuk-artifacts, Pydantic v2 response models, dual output mode, terrain derivatives (hillshade/slope/aspect/curvature/TRI/contour/watershed), elevation profiles, viewshed analysis, FABDEM license warnings, LLM input normalization for `dem_fetch_points`, rule-based landform classification, Isolation Forest anomaly detection, temporal elevation change detection, CNN-inspired multi-angle hillshade feature detection, LLM terrain interpretation via MCP sampling.
+**Implemented:** 6 DEM sources (Copernicus GLO-30/90, SRTM, ASTER, 3DEP, FABDEM), tile URL construction for Copernicus/SRTM/3DEP/FABDEM, multi-tile merging, void filling, point sampling (nearest/bilinear/cubic), hillshade auto-preview, coverage checking, size estimation, LRU tile cache (100 MB), artifact storage via chuk-artifacts, Pydantic v2 response models, dual output mode, terrain derivatives (hillshade/slope/aspect/curvature/TRI/contour/watershed), elevation profiles, viewshed analysis, interactive view tools (profile chart via `dem_profile_chart`, map via `dem_map`) using `chuk-view-schemas`, FABDEM license warnings, LLM input normalization for `dem_fetch_points`, rule-based landform classification, Isolation Forest anomaly detection, temporal elevation change detection, CNN-inspired multi-angle hillshade feature detection, LLM terrain interpretation via MCP sampling.
 
 ---
 
@@ -261,11 +261,54 @@ Tier 3 upgrade: contextual reasoning about terrain. Takes any terrain derivative
 
 ---
 
+## Phase 3.2: Interactive View Tools (v0.8.0) -- COMPLETE
+
+Tier 1 upgrade: rich UI rendering for MCP clients that support `view_tool` (e.g. Claude Desktop with mcp-views). View tools return `structuredContent` instead of JSON strings and use the `chuk-view-schemas` Pydantic models.
+
+**New dependency:** `chuk-view-schemas>=0.1.0` (added to base install). Provides `ProfileContent`, `MapContent`, and related models plus `@profile_tool`/`@map_tool` decorators.
+
+### 3.2.1 Elevation Profile Chart (1 tool)
+
+- [x] `dem_profile_chart` -- render elevation cross-section as an interactive profile chart
+- [x] `@profile_tool` decorator from `chuk_view_schemas.chuk_mcp` (registers via `mcp.view_tool()`)
+- [x] `ProfileContent` return type with `ProfilePoint(x, y)` mapping distance_m → elevation_m
+- [x] Title includes gain/loss statistics; NaN points skipped
+- [x] Validation: `num_points >= 2`, `interpolation` in allowed methods, raises `ValueError` on bad input
+
+### 3.2.2 DEM Map (1 tool)
+
+- [x] `dem_map` -- display a DEM analysis area on an interactive map with bbox polygon overlay
+- [x] `@map_tool` decorator from `chuk_view_schemas.chuk_mcp` (registers via `mcp.view_tool()`)
+- [x] `MapContent` return type: `MapCenter`, `MapLayer` with GeoJSON FeatureCollection bbox polygon
+- [x] Auto-calculated zoom: `max(1, min(15, round(log2(360 / max_extent))))`
+- [x] Configurable basemap: `terrain` (default), `satellite`, `osm`, `dark`
+- [x] `BASEMAP_OPTIONS` constant and `ErrorMessages.INVALID_BASEMAP` in `constants.py`
+
+### 3.2.3 Architecture
+
+- [x] `TOOL_COUNT = 25` centralised in `constants.py` (replaces hardcoded `22` in `dem_capabilities`)
+- [x] `INTERPRETATION_CONTEXT_DESCRIPTIONS` moved from inline dict to `constants.py`
+- [x] `ARCHITECTURE.md` updated: module graph, data flows 13/14, MCP sampling API
+- [x] View tool error handling: raises exceptions rather than returning `ErrorResponse` (documented deviation from Principle 7 -- incompatible with `structuredContent` return type)
+
+### 3.2.4 Tests
+
+- [x] `TestDemProfileChart` (12 tests): structured content shape, point mapping, axis labels, title content, fill flag, param forwarding, NaN skipping, error propagation
+- [x] `TestDemMap` (14 tests): registration, center computation, basemap validation, GeoJSON polygon, zoom scaling, bbox validation
+- [x] `test_tool_count` updated to use `TOOL_COUNT` constant
+- [x] 1231 tests total, all passing
+
+### 3.2.5 Examples
+
+- [x] `views_demo.py` -- Grand Canyon dem_profile_chart + dem_map demonstration
+
+---
+
 ## Dependency Tiers
 
 | Install | Adds | Tier |
 |---------|------|------|
-| `chuk-mcp-dem` | numpy, rasterio, scipy | Tier 1: deterministic compute (18 tools) + feature detection |
+| `chuk-mcp-dem` | numpy, rasterio, scipy, chuk-view-schemas | Tier 1: deterministic compute (18 tools) + feature detection + view tools (2) |
 | `chuk-mcp-dem[ml]` | + scikit-learn | Tier 2: recognition (4 tools -- landforms, anomalies, temporal, features) |
 | *no extra needed* | MCP SDK (already installed) | Tier 3: reasoning (1 tool -- dem_interpret via MCP sampling) |
 
@@ -303,6 +346,7 @@ Note: Feature detection (`dem_detect_features`) uses scipy convolutional filters
 | 0.5.1 | 2.2 | LLM Robustness | `dem_fetch_points` input normalization, improved schema docstrings, 1006 tests (95% coverage) |
 | 0.6.0 | 3.0 | ML Terrain Analysis | +4 tools (landforms, anomalies, temporal change, feature detection), `[ml]` optional extra, 1167 tests |
 | 0.7.0 | 3.1 | LLM Interpretation | +1 tool (interpret), MCP sampling, no new deps, 1205 tests |
+| 0.8.0 | 3.2 | Interactive View Tools | +2 tools (profile_chart, map), chuk-view-schemas, TOOL_COUNT constant, 1231 tests |
 
 ---
 

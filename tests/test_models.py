@@ -46,7 +46,6 @@ from chuk_mcp_dem.models.responses import (
     format_response,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
@@ -1573,7 +1572,10 @@ class TestLandformResponse:
         assert r.resolution_m == 30.0
         assert r.shape == [100, 100]
         assert r.class_distribution == {
-            "plain": 60.0, "ridge": 15.0, "valley": 10.0, "plateau": 15.0
+            "plain": 60.0,
+            "ridge": 15.0,
+            "valley": 10.0,
+            "plateau": 15.0,
         }
         assert r.dominant_landform == "plain"
         assert r.output_format == "geotiff"
@@ -1833,8 +1835,10 @@ class TestFeatureDetectionResponse:
 
     def test_with_features(self):
         feat = TerrainFeature(
-            bbox=[7.0, 46.0, 7.5, 46.5], area_m2=500.0,
-            feature_type="peak", confidence=0.8,
+            bbox=[7.0, 46.0, 7.5, 46.5],
+            area_m2=500.0,
+            feature_type="peak",
+            confidence=0.8,
         )
         obj = self._make(features=[feat], feature_count=1)
         assert len(obj.features) == 1

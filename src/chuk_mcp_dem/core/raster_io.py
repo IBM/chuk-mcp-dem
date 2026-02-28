@@ -1145,8 +1145,7 @@ def compute_elevation_change(
     mid_row = nrows // 2
     mid_lat_deg = float(transform[5]) + mid_row * float(transform[4])
     pixel_area_m2 = (
-        cellsize_x * 111320.0 * math.cos(math.radians(mid_lat_deg))
-        * cellsize_y * 111320.0
+        cellsize_x * 111320.0 * math.cos(math.radians(mid_lat_deg)) * cellsize_y * 111320.0
     )
 
     regions: list[dict] = []
@@ -1164,13 +1163,15 @@ def compute_elevation_change(
             south, north = north, south
 
         mean_change = float(np.nanmean(region_change))
-        regions.append({
-            "bbox": [west, south, east, north],
-            "area_m2": float(mask.sum()) * pixel_area_m2,
-            "mean_change_m": mean_change,
-            "max_change_m": float(np.nanmax(np.abs(region_change))),
-            "change_type": "gain" if mean_change > 0 else "loss",
-        })
+        regions.append(
+            {
+                "bbox": [west, south, east, north],
+                "area_m2": float(mask.sum()) * pixel_area_m2,
+                "mean_change_m": mean_change,
+                "max_change_m": float(np.nanmax(np.abs(region_change))),
+                "change_type": "gain" if mean_change > 0 else "loss",
+            }
+        )
 
     return change, regions
 
@@ -1208,7 +1209,7 @@ def compute_landforms(
     elevation: FloatArray,
     transform: Transform,
     method: str = "rule_based",
-) -> FloatArray:
+) -> NDArray[np.unsignedinteger[Any]]:
     """Classify each pixel into a landform type using terrain derivatives.
 
     Rule-based classification using slope, curvature, and TRI:
@@ -1247,9 +1248,7 @@ def compute_landforms(
     # Plateau: low slope, high elevation, low ruggedness (class 3)
     valid_elev = elevation[~np.isnan(elevation)]
     elev_p75 = float(np.percentile(valid_elev, 75)) if len(valid_elev) > 0 else 0.0
-    plateau_mask = (
-        (slope < 5.0) & (elevation > elev_p75) & (tri < 20.0) & (result == 0)
-    )
+    plateau_mask = (slope < 5.0) & (elevation > elev_p75) & (tri < 20.0) & (result == 0)
     result[plateau_mask] = 3
 
     # Depression: local minimum — all 8 neighbours higher (class 5)
@@ -1260,27 +1259,26 @@ def compute_landforms(
         for dc in (-1, 0, 1):
             if dr == 0 and dc == 0:
                 continue
-            is_min &= centre < padded[1 + dr:elevation.shape[0] + 1 + dr,
-                                      1 + dc:elevation.shape[1] + 1 + dc]
+            is_min &= (
+                centre
+                < padded[1 + dr : elevation.shape[0] + 1 + dr, 1 + dc : elevation.shape[1] + 1 + dc]
+            )
     result[(is_min) & (result == 0)] = 5
 
     # Terrace: low slope adjacent to steep terrain (class 7)
     from scipy.ndimage import maximum_filter
+
     max_slope = maximum_filter(slope, size=5)
     terrace_mask = (slope < 10.0) & (max_slope > 20.0) & (result == 0)
     result[terrace_mask] = 7
 
     # Alluvial fan: low slope, moderate TRI, slightly concave (class 8)
-    fan_mask = (
-        (slope < 8.0) & (tri > 5.0) & (tri < 30.0)
-        & (curvature < 0) & (result == 0)
-    )
+    fan_mask = (slope < 8.0) & (tri > 5.0) & (tri < 30.0) & (curvature < 0) & (result == 0)
     result[fan_mask] = 8
 
     # Saddle: near-zero curvature, low slope, not already classified (class 6)
     saddle_mask = (
-        (np.abs(curvature) < 0.1 * curv_std) & (slope < 10.0)
-        & (slope > 2.0) & (result == 0)
+        (np.abs(curvature) < 0.1 * curv_std) & (slope < 10.0) & (slope > 2.0) & (result == 0)
     )
     result[saddle_mask] = 6
 
@@ -1290,21 +1288,24 @@ def compute_landforms(
 
 
 # Landform class colour map: index → (R, G, B)
-_LANDFORM_COLOURS = np.array([
-    [200, 230, 200],   # 0: plain - light green
-    [139, 90, 43],     # 1: ridge - brown
-    [34, 139, 34],     # 2: valley - forest green
-    [210, 180, 140],   # 3: plateau - tan
-    [220, 20, 20],     # 4: escarpment - red
-    [70, 130, 180],    # 5: depression - steel blue
-    [255, 215, 0],     # 6: saddle - gold
-    [255, 165, 80],    # 7: terrace - orange
-    [244, 220, 180],   # 8: alluvial fan - sandy
-], dtype=np.uint8)
+_LANDFORM_COLOURS = np.array(
+    [
+        [200, 230, 200],  # 0: plain - light green
+        [139, 90, 43],  # 1: ridge - brown
+        [34, 139, 34],  # 2: valley - forest green
+        [210, 180, 140],  # 3: plateau - tan
+        [220, 20, 20],  # 4: escarpment - red
+        [70, 130, 180],  # 5: depression - steel blue
+        [255, 215, 0],  # 6: saddle - gold
+        [255, 165, 80],  # 7: terrace - orange
+        [244, 220, 180],  # 8: alluvial fan - sandy
+    ],
+    dtype=np.uint8,
+)
 
 
 def landform_to_png(
-    landforms: FloatArray,
+    landforms: NDArray[np.unsignedinteger[Any]],
 ) -> bytes:
     """Generate a landform classification PNG with categorical colours.
 
@@ -1358,11 +1359,13 @@ def compute_anomaly_scores(
     tri = compute_tri(elevation, transform)
 
     # Build feature matrix (flatten, replace NaN with 0)
-    features = np.column_stack([
-        np.nan_to_num(slope.ravel(), nan=0.0),
-        np.nan_to_num(curvature.ravel(), nan=0.0),
-        np.nan_to_num(tri.ravel(), nan=0.0),
-    ])
+    features = np.column_stack(
+        [
+            np.nan_to_num(slope.ravel(), nan=0.0),
+            np.nan_to_num(curvature.ravel(), nan=0.0),
+            np.nan_to_num(tri.ravel(), nan=0.0),
+        ]
+    )
 
     clf = IsolationForest(contamination=sensitivity, random_state=42, n_jobs=-1)
     clf.fit(features)
@@ -1387,8 +1390,7 @@ def compute_anomaly_scores(
     mid_row = nrows // 2
     mid_lat_deg = float(transform[5]) + mid_row * float(transform[4])
     pixel_area_m2 = (
-        cellsize_x * 111320.0 * math.cos(math.radians(mid_lat_deg))
-        * cellsize_y * 111320.0
+        cellsize_x * 111320.0 * math.cos(math.radians(mid_lat_deg)) * cellsize_y * 111320.0
     )
 
     anomalies: list[dict] = []
@@ -1404,12 +1406,14 @@ def compute_anomaly_scores(
         if south > north:
             south, north = north, south
 
-        anomalies.append({
-            "bbox": [west, south, east, north],
-            "area_m2": float(mask.sum()) * pixel_area_m2,
-            "confidence": float(np.mean(region_scores)),
-            "mean_anomaly_score": float(np.mean(region_scores)),
-        })
+        anomalies.append(
+            {
+                "bbox": [west, south, east, north],
+                "area_m2": float(mask.sum()) * pixel_area_m2,
+                "confidence": float(np.mean(region_scores)),
+                "mean_anomaly_score": float(np.mean(region_scores)),
+            }
+        )
 
     return scores, anomalies
 
@@ -1527,10 +1531,7 @@ def compute_feature_detection(
     # Channel: narrow valley with steep sides nearby
     max_slope_nearby = maximum_filter(slope, size=5)
     is_channel = (
-        (curvature < -0.8 * curv_std)
-        & (max_slope_nearby > 20.0)
-        & (slope < 15.0)
-        & (result == 0)
+        (curvature < -0.8 * curv_std) & (max_slope_nearby > 20.0) & (slope < 15.0) & (result == 0)
     )
     result[is_channel] = 6
 
@@ -1588,12 +1589,14 @@ def compute_feature_detection(
         region_edges = edge_consensus[mask]
         confidence = float(np.clip(np.mean(region_edges) / edge_max, 0.0, 1.0))
 
-        features_list.append({
-            "bbox": [west, south, east, north],
-            "area_m2": float(mask.sum()) * pixel_area_m2,
-            "feature_type": feature_names.get(dominant_cls, "unknown"),
-            "confidence": round(confidence, 3),
-        })
+        features_list.append(
+            {
+                "bbox": [west, south, east, north],
+                "area_m2": float(mask.sum()) * pixel_area_m2,
+                "feature_type": feature_names.get(dominant_cls, "unknown"),
+                "confidence": round(confidence, 3),
+            }
+        )
 
     return result.astype(np.float32), features_list
 

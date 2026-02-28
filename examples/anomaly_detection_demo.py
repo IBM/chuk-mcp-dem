@@ -144,9 +144,7 @@ async def main() -> None:
     anomaly_mask = anomaly_scores > 0.5
     overlay = np.ma.masked_where(~anomaly_mask, anomaly_scores)
     im = ax.imshow(overlay, cmap="Reds", vmin=0.5, vmax=1.0, alpha=0.8)
-    ax.set_title(
-        f"Anomaly Overlay (score > 0.5, n={int(anomaly_mask.sum())} px)", fontsize=13
-    )
+    ax.set_title(f"Anomaly Overlay (score > 0.5, n={int(anomaly_mask.sum())} px)", fontsize=13)
     ax.axis("off")
     fig.colorbar(im, ax=ax, label="Anomaly score", shrink=0.7)
 

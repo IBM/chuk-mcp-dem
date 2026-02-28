@@ -27,7 +27,6 @@ from chuk_mcp_dem.core.dem_manager import (
     AnomalyResult,
 )
 
-
 # ===================================================================
 # Discovery methods (sync)
 # ===================================================================
@@ -1792,9 +1791,7 @@ class TestFetchLandforms:
                 return_value=b"fake-png",
             ),
         ):
-            result = await mock_manager.fetch_landforms(
-                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30"
-            )
+            result = await mock_manager.fetch_landforms(bbox=[7.0, 46.0, 8.0, 47.0], source="cop30")
 
         assert isinstance(result, LandformResult)
         assert result.artifact_ref.startswith("dem/")
@@ -1807,16 +1804,12 @@ class TestFetchLandforms:
 
     async def test_fetch_landforms_invalid_source(self, mock_manager):
         with pytest.raises(ValueError, match="Unknown DEM source"):
-            await mock_manager.fetch_landforms(
-                bbox=[7.0, 46.0, 8.0, 47.0], source="bad"
-            )
+            await mock_manager.fetch_landforms(bbox=[7.0, 46.0, 8.0, 47.0], source="bad")
 
     async def test_fetch_landforms_no_coverage(self, mock_manager):
         """Source with no tile URL constructor raises."""
         with pytest.raises(ValueError, match="does not cover"):
-            await mock_manager.fetch_landforms(
-                bbox=[7.0, 46.0, 8.0, 47.0], source="aster"
-            )
+            await mock_manager.fetch_landforms(bbox=[7.0, 46.0, 8.0, 47.0], source="aster")
 
     async def test_fetch_landforms_png_output(
         self, mock_manager, sample_elevation, sample_crs, sample_transform
@@ -1887,9 +1880,7 @@ class TestFetchAnomalies:
                 return_value=b"fake-png",
             ),
         ):
-            result = await mock_manager.fetch_anomalies(
-                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30"
-            )
+            result = await mock_manager.fetch_anomalies(bbox=[7.0, 46.0, 8.0, 47.0], source="cop30")
 
         assert isinstance(result, AnomalyResult)
         assert result.artifact_ref.startswith("dem/")
@@ -1901,16 +1892,12 @@ class TestFetchAnomalies:
 
     async def test_fetch_anomalies_invalid_source(self, mock_manager):
         with pytest.raises(ValueError, match="Unknown DEM source"):
-            await mock_manager.fetch_anomalies(
-                bbox=[7.0, 46.0, 8.0, 47.0], source="bad"
-            )
+            await mock_manager.fetch_anomalies(bbox=[7.0, 46.0, 8.0, 47.0], source="bad")
 
     async def test_fetch_anomalies_no_coverage(self, mock_manager):
         """Source with no tile URL constructor raises."""
         with pytest.raises(ValueError, match="does not cover"):
-            await mock_manager.fetch_anomalies(
-                bbox=[7.0, 46.0, 8.0, 47.0], source="aster"
-            )
+            await mock_manager.fetch_anomalies(bbox=[7.0, 46.0, 8.0, 47.0], source="aster")
 
     async def test_fetch_anomalies_png_output(
         self, mock_manager, sample_elevation, sample_crs, sample_transform
@@ -1963,7 +1950,14 @@ class TestFetchFeatures:
                 "chuk_mcp_dem.core.raster_io.compute_feature_detection",
                 return_value=(
                     np.zeros(sample_elevation.shape, dtype=np.float32),
-                    [{"bbox": [7, 46, 8, 47], "area_m2": 100.0, "feature_type": "ridge", "confidence": 0.5}],
+                    [
+                        {
+                            "bbox": [7, 46, 8, 47],
+                            "area_m2": 100.0,
+                            "feature_type": "ridge",
+                            "confidence": 0.5,
+                        }
+                    ],
                 ),
             ),
             patch(
@@ -1975,9 +1969,7 @@ class TestFetchFeatures:
                 return_value=b"fake-png",
             ),
         ):
-            result = await mock_manager.fetch_features(
-                bbox=[7.0, 46.0, 8.0, 47.0], source="cop30"
-            )
+            result = await mock_manager.fetch_features(bbox=[7.0, 46.0, 8.0, 47.0], source="cop30")
             assert result.artifact_ref
             assert result.crs == str(sample_crs)
             assert result.resolution_m == 30
@@ -2018,16 +2010,12 @@ class TestFetchFeatures:
 
     async def test_fetch_features_invalid_source(self, mock_manager):
         with pytest.raises(ValueError, match="Unknown DEM source"):
-            await mock_manager.fetch_features(
-                bbox=[7.0, 46.0, 8.0, 47.0], source="bad"
-            )
+            await mock_manager.fetch_features(bbox=[7.0, 46.0, 8.0, 47.0], source="bad")
 
     async def test_fetch_features_no_coverage(self, mock_manager):
         """Source with no tile URL constructor raises."""
         with pytest.raises(ValueError, match="does not cover"):
-            await mock_manager.fetch_features(
-                bbox=[7.0, 46.0, 8.0, 47.0], source="aster"
-            )
+            await mock_manager.fetch_features(bbox=[7.0, 46.0, 8.0, 47.0], source="aster")
 
 
 # ===================================================================
@@ -2139,9 +2127,7 @@ class TestPrepareForInterpretation:
         )
 
         fake_png = b"\x89PNG fake png bytes"
-        with _patch(
-            "chuk_mcp_dem.core.raster_io.raster_to_png", return_value=fake_png
-        ):
+        with _patch("chuk_mcp_dem.core.raster_io.raster_to_png", return_value=fake_png):
             result = await mock_manager.prepare_for_interpretation("dem/abc123.tif")
 
         assert isinstance(result, InterpretResult)
@@ -2162,43 +2148,31 @@ class TestPrepareForInterpretation:
             }
         )
 
-        with _patch(
-            "chuk_mcp_dem.core.raster_io.raster_to_png", return_value=b"\x89PNG"
-        ):
+        with _patch("chuk_mcp_dem.core.raster_io.raster_to_png", return_value=b"\x89PNG"):
             result = await mock_manager.prepare_for_interpretation("dem/slope.tif")
 
         assert result.artifact_metadata["type"] == "slope"
         assert result.artifact_metadata["bbox"] == [7.0, 46.0, 8.0, 47.0]
 
     @pytest.mark.asyncio
-    async def test_prepare_metadata_failure_graceful(
-        self, mock_manager, mock_artifact_store
-    ):
+    async def test_prepare_metadata_failure_graceful(self, mock_manager, mock_artifact_store):
         """If get_metadata raises, metadata defaults to empty dict."""
         from unittest.mock import AsyncMock, patch as _patch
 
         mock_artifact_store.retrieve = AsyncMock(return_value=b"data")
-        mock_artifact_store.get_metadata = AsyncMock(
-            side_effect=Exception("metadata error")
-        )
+        mock_artifact_store.get_metadata = AsyncMock(side_effect=Exception("metadata error"))
 
-        with _patch(
-            "chuk_mcp_dem.core.raster_io.raster_to_png", return_value=b"\x89PNG"
-        ):
+        with _patch("chuk_mcp_dem.core.raster_io.raster_to_png", return_value=b"\x89PNG"):
             result = await mock_manager.prepare_for_interpretation("dem/abc.tif")
 
         assert result.artifact_metadata == {}
 
     @pytest.mark.asyncio
-    async def test_prepare_missing_artifact_raises(
-        self, mock_manager, mock_artifact_store
-    ):
+    async def test_prepare_missing_artifact_raises(self, mock_manager, mock_artifact_store):
         """If store.retrieve raises, the error propagates."""
         from unittest.mock import AsyncMock
 
-        mock_artifact_store.retrieve = AsyncMock(
-            side_effect=FileNotFoundError("not found")
-        )
+        mock_artifact_store.retrieve = AsyncMock(side_effect=FileNotFoundError("not found"))
 
         with pytest.raises(FileNotFoundError, match="not found"):
             await mock_manager.prepare_for_interpretation("dem/missing.tif")

@@ -7,12 +7,12 @@ Version 0.1.0
 chuk-mcp-dem is an MCP (Model Context Protocol) server that provides digital
 elevation model (DEM) discovery, retrieval, and terrain analysis.
 
-- **23 tools** for discovering DEM sources, fetching elevation data, computing terrain derivatives, generating profiles/viewsheds, ML-enhanced terrain analysis, and LLM terrain interpretation
+- **25 tools** for discovering DEM sources, fetching elevation data, computing terrain derivatives, generating profiles/viewsheds, interactive view tools, ML-enhanced terrain analysis, and LLM terrain interpretation
 - **Dual output mode** -- all tools return JSON (default) or human-readable text via `output_mode` parameter
 - **Async-first** -- tool entry points are async; sync rasterio I/O runs in thread pools
 - **Pluggable storage** -- raster data stored via chuk-artifacts (memory, filesystem, S3)
 
-All 23 tools are implemented: discovery (4), download (5), terrain analysis (7), profile/viewshed (2), ML-enhanced analysis (4), and LLM interpretation (1).
+All 25 tools are implemented: discovery (4), download (5), terrain analysis (7), profile/viewshed (2), view tools (2), ML-enhanced analysis (4), and LLM interpretation (1).
 
 ---
 
@@ -503,6 +503,65 @@ Compute visible area from an observer point.
 
 ---
 
+### View Tools
+
+View tools return `structuredContent` for MCP clients that support rich UI rendering (e.g. Claude Desktop with mcp-views). They use `@profile_tool`/`@map_tool` decorators from `chuk_view_schemas.chuk_mcp` and register via `mcp.view_tool()` rather than `mcp.tool()`. They do **not** accept `output_mode` and raise `ValueError`/re-raise exceptions rather than returning `ErrorResponse`.
+
+#### `dem_profile_chart`
+
+Render an elevation profile as an interactive chart. Same computation as `dem_profile` but returns structured view content instead of JSON.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `start` | `float[2]` | *required* | Start point [lon, lat] |
+| `end` | `float[2]` | *required* | End point [lon, lat] |
+| `source` | `str?` | `cop30` | DEM source identifier |
+| `num_points` | `int` | `100` | Number of sample points (must be >= 2) |
+| `interpolation` | `str` | `bilinear` | Interpolation method: `nearest`, `bilinear`, or `cubic` |
+
+**Return type:** `ProfileContent` (via `structuredContent`)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `str` | `"profile"` |
+| `version` | `str` | `"1.0"` |
+| `title` | `str` | `"Elevation Profile — Xkm | ↑Ym ↓Zm"` |
+| `xLabel` | `str` | `"Distance (m)"` |
+| `yLabel` | `str` | `"Elevation (m)"` |
+| `fill` | `bool` | `true` — shaded area under profile |
+| `points` | `ProfilePoint[]` | `{x: distance_m, y: elevation_m}` — NaN points omitted |
+
+---
+
+#### `dem_map`
+
+Display a DEM analysis area on an interactive map with a bounding box polygon overlay.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `bbox` | `float[4]` | *required* | Bounding box `[west, south, east, north]` |
+| `source` | `str?` | `cop30` | DEM source identifier (used for layer label) |
+| `basemap` | `str` | `terrain` | Basemap style: `terrain`, `satellite`, `osm`, `dark` |
+
+**Return type:** `MapContent` (via `structuredContent`)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `str` | `"map"` |
+| `version` | `str` | `"1.0"` |
+| `center` | `MapCenter` | `{lat, lon}` — bbox centroid |
+| `zoom` | `int` | Auto-calculated: `max(1, min(15, round(log2(360 / max_extent))))` |
+| `basemap` | `str` | Selected basemap style |
+| `layers` | `MapLayer[]` | Single GeoJSON layer: bbox polygon as `FeatureCollection` |
+
+**Zoom reference:** ~9 for 1° bbox, ~6 for 5°, ~12 for 0.1°, ~15 for very small areas.
+
+---
+
 ### ML-Enhanced Analysis Tools
 
 #### `dem_classify_landforms`
@@ -690,6 +749,7 @@ Send any terrain artifact to the calling LLM via MCP sampling (`sampling/createM
 | **2.2** | v0.5.1 | -- | LLM input normalization for `dem_fetch_points` |
 | **3.0** | v0.6.0 | +4 tools | ML-enhanced analysis: landforms, anomalies, temporal change, feature detection |
 | **3.1** | v0.7.0 | +1 tool | LLM terrain interpretation via MCP sampling |
+| **3.2** | v0.8.0 | +2 tools | Interactive view tools: profile chart + map via chuk-view-schemas |
 
 ---
 
@@ -756,7 +816,7 @@ Additional environment variables for S3: `BUCKET_NAME`, `AWS_ACCESS_KEY_ID`,
 
 ## Error Handling
 
-All tools return `ErrorResponse` on failure:
+All tools except view tools (`dem_profile_chart`, `dem_map`) return `ErrorResponse` on failure. View tools raise exceptions instead (incompatible with `structuredContent` return type).
 
 ```json
 {

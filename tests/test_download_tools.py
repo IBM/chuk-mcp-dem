@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 from chuk_mcp_dem.core.dem_manager import FetchResult, MultiPointResult, PointResult
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

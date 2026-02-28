@@ -199,8 +199,7 @@ async def main() -> None:
     ax = axes[1, 0]
     im = ax.imshow(anomaly_scores, cmap="YlOrRd", vmin=0, vmax=1)
     ax.set_title(
-        f"Anomaly Scores ({anomaly_result['anomaly_count']} regions, "
-        f"sensitivity={SENSITIVITY})",
+        f"Anomaly Scores ({anomaly_result['anomaly_count']} regions, sensitivity={SENSITIVITY})",
         fontsize=12,
     )
     ax.axis("off")
@@ -213,9 +212,7 @@ async def main() -> None:
     overlay = np.ma.masked_where(~anomaly_mask, anomaly_scores)
     im = ax.imshow(overlay, cmap="Reds", vmin=0.5, vmax=1.0, alpha=0.8)
     n_flagged = int(anomaly_mask.sum())
-    ax.set_title(
-        f"Anomaly Overlay on Low-Angle Hillshade ({n_flagged} px)", fontsize=12
-    )
+    ax.set_title(f"Anomaly Overlay on Low-Angle Hillshade ({n_flagged} px)", fontsize=12)
     ax.axis("off")
     fig.colorbar(im, ax=ax, label="Anomaly score", shrink=0.7)
 
@@ -224,9 +221,7 @@ async def main() -> None:
     if feature_map is not None:
         feat_cmap = ListedColormap(FEATURE_COLORS)
         ax.imshow(feature_map, cmap=feat_cmap, vmin=-0.5, vmax=6.5, interpolation="nearest")
-        ax.set_title(
-            f"Feature Detection ({feature_result['feature_count']} regions)", fontsize=12
-        )
+        ax.set_title(f"Feature Detection ({feature_result['feature_count']} regions)", fontsize=12)
         legend_patches = [
             Patch(facecolor=FEATURE_COLORS[i], label=FEATURE_CLASSES[i])
             for i in range(len(FEATURE_CLASSES))
@@ -235,8 +230,14 @@ async def main() -> None:
         ax.legend(handles=legend_patches, loc="lower right", fontsize=7, framealpha=0.8)
     else:
         ax.text(
-            0.5, 0.5, "Feature detection\nfailed", transform=ax.transAxes,
-            ha="center", va="center", fontsize=14, color="red",
+            0.5,
+            0.5,
+            "Feature detection\nfailed",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=14,
+            color="red",
         )
         ax.set_title("Feature Detection (error)", fontsize=12)
     ax.axis("off")
@@ -268,14 +269,14 @@ async def main() -> None:
     print()
     print("  We didn't tell the AI what to look for.")
     print("  It received only raw elevation data -- no labels, no training,")
-    print("  no archaeological context. On terrain with just "
-          f"{total_relief:.0f}m of relief,")
-    print(f"  Isolation Forest found {anomaly_result['anomaly_count']} "
-          "anomaly regions where the")
+    print(f"  no archaeological context. On terrain with just {total_relief:.0f}m of relief,")
+    print(f"  Isolation Forest found {anomaly_result['anomaly_count']} anomaly regions where the")
     print("  terrain deviates from the surrounding chalk downland pattern.")
     if feature_map is not None:
-        print(f"  Feature detection identified {feature_result['feature_count']} "
-              "geomorphological features.")
+        print(
+            f"  Feature detection identified {feature_result['feature_count']} "
+            "geomorphological features."
+        )
     print()
     print("  These anomalies coincide with one of the densest archaeological")
     print("  landscapes in Europe -- barrow cemeteries, henge monuments, and")

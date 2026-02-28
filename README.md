@@ -6,11 +6,11 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Tests: 1205 passed](https://img.shields.io/badge/tests-1205%20passed-brightgreen.svg)]()
+[![Tests: 1231 passed](https://img.shields.io/badge/tests-1231%20passed-brightgreen.svg)]()
 
 ## Features
 
-This MCP server provides access to global elevation data through 6 DEM sources via 23 tools.
+This MCP server provides access to global elevation data through 6 DEM sources via 25 tools.
 
 **All tools return fully-typed Pydantic v2 models** for type safety, validation, and excellent IDE support. All tools support `output_mode="text"` for human-readable output alongside the default JSON.
 
@@ -142,29 +142,48 @@ Compute visible area from an observer point:
 - Configurable observer height and radius (up to 50 km)
 - Returns visibility percentage and raster artifact
 
+### View Tools
+
+Interactive visualisation tools that return structured view content for MCP clients that support
+rich UI rendering (e.g. Claude Desktop with mcp-views). These tools return `structuredContent`
+rather than JSON strings and do not accept `output_mode`.
+
+#### 19. Elevation Profile Chart (`dem_profile_chart`)
+Render an elevation profile as an interactive chart:
+- Same profile computation as `dem_profile` with gain/loss statistics in the title
+- Returns a `ProfileContent` view with labelled x/y axes and filled area
+- Rendered as an interactive line chart in supporting MCP clients
+
+#### 20. DEM Map (`dem_map`)
+Display a DEM analysis area on an interactive map:
+- Renders the bounding box as a GeoJSON polygon overlay on a tiled basemap
+- Configurable basemap: terrain (default), satellite, osm, dark
+- Auto-calculates zoom level from bbox extent
+- Useful for verifying coverage before fetching elevation data
+
 ### ML-Enhanced Analysis Tools
 
 Tier 2 tools that *recognise* terrain features using existing terrain derivatives as input. Install with `pip install chuk-mcp-dem[ml]` for Isolation Forest support.
 
-#### 19. Landform Classification (`dem_classify_landforms`)
+#### 21. Landform Classification (`dem_classify_landforms`)
 Classify terrain into geomorphological types:
 - 9 landform classes: plain, ridge, valley, plateau, escarpment, depression, saddle, terrace, alluvial fan
 - Rule-based classification using slope, curvature, and TRI thresholds
 - Returns dominant landform and class distribution percentages
 
-#### 20. Anomaly Detection (`dem_detect_anomalies`)
+#### 22. Anomaly Detection (`dem_detect_anomalies`)
 Detect terrain anomalies using Isolation Forest:
 - Stacks slope, curvature, TRI, and roughness into feature vectors
 - scikit-learn Isolation Forest identifies outlier terrain
 - Returns anomaly score map and labelled anomaly regions with confidence
 
-#### 21. Temporal Change (`dem_compare_temporal`)
+#### 23. Temporal Change (`dem_compare_temporal`)
 Compute elevation change between two DEM sources:
 - Pixel-aligned subtraction with significance thresholding
 - Volume gained/lost calculation in cubic metres
 - Labelled change regions with mean/max change and gain/loss type
 
-#### 22. Feature Detection (`dem_detect_features`)
+#### 24. Feature Detection (`dem_detect_features`)
 CNN-inspired geomorphological feature detection:
 - Multi-angle hillshade (8 azimuths) with Sobel edge filters
 - Classifies pixels into peak, ridge, valley, cliff, saddle, channel
@@ -173,7 +192,7 @@ CNN-inspired geomorphological feature detection:
 
 ### LLM Interpretation Tool
 
-#### 23. Terrain Interpretation (`dem_interpret`)
+#### 25. Terrain Interpretation (`dem_interpret`)
 Send any terrain artifact to the calling LLM via MCP sampling for interpretation:
 - Converts GeoTIFF or PNG artifacts to images for the LLM
 - 6 interpretation contexts: general, archaeological survey, flood risk, geological, military history, urban planning
@@ -270,6 +289,8 @@ Once configured, you can ask Claude questions like:
 - "Generate a hillshade map for Mount Rainier"
 - "What's the slope along the trail from A to B?"
 - "Show me what's visible from this viewpoint within 5 km"
+- "Show me an elevation profile chart for a hike from A to B"
+- "Show the Grand Canyon bounding box on a map before I download it"
 - "Compute watershed flow accumulation for this mountain area"
 - "Classify the landforms in this bounding box"
 - "Detect terrain anomalies near Hoover Dam"
@@ -300,6 +321,8 @@ All tools accept an optional `output_mode` parameter (`"json"` default, or `"tex
 | `dem_watershed` | Flow accumulation analysis | `bbox`, `source`, `output_format` |
 | `dem_profile` | Elevation cross-section | `start`, `end`, `num_points` |
 | `dem_viewshed` | Visibility analysis | `observer`, `radius_m`, `observer_height_m` |
+| `dem_profile_chart` | Interactive elevation profile chart (view) | `start`, `end`, `num_points` |
+| `dem_map` | Interactive DEM analysis area map (view) | `bbox`, `source`, `basemap` |
 | `dem_classify_landforms` | Landform classification | `bbox`, `source`, `method` |
 | `dem_detect_anomalies` | Anomaly detection (Isolation Forest) | `bbox`, `source`, `sensitivity` |
 | `dem_compare_temporal` | Elevation change detection | `bbox`, `before_source`, `after_source` |
@@ -369,7 +392,7 @@ server.py                         # CLI entry point (sync)
   +-- async_server.py             # Async server setup, tool registration
        +-- tools/discovery/       # list_sources, describe, status, capabilities
        +-- tools/download/        # fetch, fetch_point, fetch_points, coverage, size
-       +-- tools/analysis/        # hillshade, slope, aspect, curvature, tri, contour, watershed, profile, viewshed, landforms, anomalies, temporal, features
+       +-- tools/analysis/        # hillshade, slope, aspect, curvature, tri, contour, watershed, profile, viewshed, profile_chart, map, landforms, anomalies, temporal, features
        +-- core/dem_manager.py    # Cache, URL construction, download pipeline
             +-- core/raster_io.py # COG read, merge, sample, terrain, PNG
 ```
@@ -388,6 +411,7 @@ Built on top of chuk-mcp-server, this server uses:
 - **Retry with Backoff**: Tenacity-based retry (3 attempts, exponential backoff)
 - **Dual Output**: All tools support `output_mode="text"` for human-readable responses
 - **License Warnings**: Automatic warnings when using FABDEM (CC-BY-NC-SA-4.0 non-commercial)
+- **View Tools**: Interactive profile charts and maps via `chuk-view-schemas` for MCP clients that support rich UI
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for design principles and data flow diagrams.
 See [SPEC.md](SPEC.md) for the full tool specification with parameter tables.
@@ -412,7 +436,7 @@ pip install -e ".[dev]"
 ### Running Tests
 
 ```bash
-make test              # Run 1205 tests
+make test              # Run 1231 tests
 make test-cov          # Run tests with coverage
 make coverage-report   # Show coverage report
 ```

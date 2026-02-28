@@ -26,7 +26,6 @@ from chuk_mcp_dem.core.dem_manager import (
     ViewshedResult,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -45,7 +44,15 @@ def analysis_tools(mock_manager):
 
         return decorator
 
+    def capture_view_tool(**kwargs):
+        def decorator(fn):
+            tools[fn.__name__] = fn
+            return fn
+
+        return decorator
+
     mcp.tool = capture_tool
+    mcp.view_tool = capture_view_tool
 
     from chuk_mcp_dem.tools.analysis.api import register_analysis_tools
 
@@ -1411,6 +1418,290 @@ class TestDemProfile:
 
 
 # ===========================================================================
+# dem_profile_chart
+# ===========================================================================
+
+
+class TestDemProfileChart:
+    """Tests for the dem_profile_chart view tool."""
+
+    @pytest.mark.asyncio
+    async def test_registered(self, analysis_tools):
+        tools, _ = analysis_tools
+        assert "dem_profile_chart" in tools
+
+    @pytest.mark.asyncio
+    async def test_returns_structured_content(self, analysis_tools, standard_profile_result):
+        tools, manager = analysis_tools
+        manager.fetch_profile = AsyncMock(return_value=standard_profile_result)
+
+        result = await tools["dem_profile_chart"](start=[7.0, 46.0], end=[8.0, 47.0])
+
+        assert isinstance(result, dict)
+        assert "structuredContent" in result
+        sc = result["structuredContent"]
+        assert sc["type"] == "profile"
+        assert sc["version"] == "1.0"
+
+    @pytest.mark.asyncio
+    async def test_points_mapped_correctly(self, analysis_tools, standard_profile_result):
+        tools, manager = analysis_tools
+        manager.fetch_profile = AsyncMock(return_value=standard_profile_result)
+
+        result = await tools["dem_profile_chart"](start=[7.0, 46.0], end=[8.0, 47.0])
+        sc = result["structuredContent"]
+
+        assert len(sc["points"]) == 3
+        assert sc["points"][0] == {"x": 0.0, "y": 500.0}
+        assert sc["points"][1] == {"x": 50000.0, "y": 1200.0}
+        assert sc["points"][2] == {"x": 100000.0, "y": 800.0}
+
+    @pytest.mark.asyncio
+    async def test_axes_labels(self, analysis_tools, standard_profile_result):
+        tools, manager = analysis_tools
+        manager.fetch_profile = AsyncMock(return_value=standard_profile_result)
+
+        result = await tools["dem_profile_chart"](start=[7.0, 46.0], end=[8.0, 47.0])
+        sc = result["structuredContent"]
+
+        assert sc["xLabel"] == "Distance (m)"
+        assert sc["yLabel"] == "Elevation (m)"
+
+    @pytest.mark.asyncio
+    async def test_title_includes_source_and_stats(self, analysis_tools, standard_profile_result):
+        tools, manager = analysis_tools
+        manager.fetch_profile = AsyncMock(return_value=standard_profile_result)
+
+        result = await tools["dem_profile_chart"](start=[7.0, 46.0], end=[8.0, 47.0])
+        sc = result["structuredContent"]
+
+        assert "cop30" in sc["title"]
+        assert "+700m" in sc["title"]
+        assert "-400m" in sc["title"]
+
+    @pytest.mark.asyncio
+    async def test_fill_enabled(self, analysis_tools, standard_profile_result):
+        tools, manager = analysis_tools
+        manager.fetch_profile = AsyncMock(return_value=standard_profile_result)
+
+        result = await tools["dem_profile_chart"](start=[7.0, 46.0], end=[8.0, 47.0])
+        sc = result["structuredContent"]
+
+        assert sc.get("fill") is True
+
+    @pytest.mark.asyncio
+    async def test_default_params_forwarded(self, analysis_tools, standard_profile_result):
+        tools, manager = analysis_tools
+        manager.fetch_profile = AsyncMock(return_value=standard_profile_result)
+
+        await tools["dem_profile_chart"](start=[7.0, 46.0], end=[8.0, 47.0])
+
+        call_kwargs = manager.fetch_profile.call_args.kwargs
+        assert call_kwargs["source"] == "cop30"
+        assert call_kwargs["num_points"] == 100
+        assert call_kwargs["interpolation"] == "bilinear"
+
+    @pytest.mark.asyncio
+    async def test_custom_source(self, analysis_tools, standard_profile_result):
+        tools, manager = analysis_tools
+        manager.fetch_profile = AsyncMock(return_value=standard_profile_result)
+
+        result = await tools["dem_profile_chart"](
+            start=[7.0, 46.0], end=[8.0, 47.0], source="cop90"
+        )
+        sc = result["structuredContent"]
+
+        assert "cop90" in sc["title"]
+        call_kwargs = manager.fetch_profile.call_args.kwargs
+        assert call_kwargs["source"] == "cop90"
+
+    @pytest.mark.asyncio
+    async def test_invalid_num_points_raises(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        with pytest.raises(ValueError, match="num_points"):
+            await tools["dem_profile_chart"](start=[7.0, 46.0], end=[8.0, 47.0], num_points=1)
+
+    @pytest.mark.asyncio
+    async def test_invalid_interpolation_raises(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        with pytest.raises(ValueError, match="spline"):
+            await tools["dem_profile_chart"](
+                start=[7.0, 46.0], end=[8.0, 47.0], interpolation="spline"
+            )
+
+    @pytest.mark.asyncio
+    async def test_manager_error_propagates(self, analysis_tools):
+        tools, manager = analysis_tools
+        manager.fetch_profile = AsyncMock(side_effect=RuntimeError("tile fetch failed"))
+
+        with pytest.raises(RuntimeError, match="tile fetch failed"):
+            await tools["dem_profile_chart"](start=[7.0, 46.0], end=[8.0, 47.0])
+
+    @pytest.mark.asyncio
+    async def test_nan_elevations_skipped(self, analysis_tools):
+        tools, manager = analysis_tools
+
+        profile_with_nans = __import__(
+            "chuk_mcp_dem.core.dem_manager", fromlist=["ProfileResult"]
+        ).ProfileResult(
+            longitudes=[7.0, 7.5, 8.0],
+            latitudes=[46.0, 46.5, 47.0],
+            distances_m=[0.0, 50000.0, 100000.0],
+            elevations=[500.0, float("nan"), 800.0],
+            total_distance_m=100000.0,
+            elevation_range=[500.0, 800.0],
+            elevation_gain_m=300.0,
+            elevation_loss_m=0.0,
+        )
+        manager.fetch_profile = AsyncMock(return_value=profile_with_nans)
+
+        result = await tools["dem_profile_chart"](start=[7.0, 46.0], end=[8.0, 47.0])
+        sc = result["structuredContent"]
+
+        assert len(sc["points"]) == 2
+        assert sc["points"][0]["y"] == 500.0
+        assert sc["points"][1]["y"] == 800.0
+
+
+# ===========================================================================
+# dem_map
+# ===========================================================================
+
+
+class TestDemMap:
+    """Tests for the dem_map view tool."""
+
+    @pytest.mark.asyncio
+    async def test_registered(self, analysis_tools):
+        tools, _ = analysis_tools
+        assert "dem_map" in tools
+
+    @pytest.mark.asyncio
+    async def test_returns_structured_content(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        result = await tools["dem_map"](bbox=[7.0, 46.0, 8.0, 47.0])
+
+        assert isinstance(result, dict)
+        assert "structuredContent" in result
+        sc = result["structuredContent"]
+        assert sc["type"] == "map"
+        assert sc["version"] == "1.0"
+
+    @pytest.mark.asyncio
+    async def test_center_computed_from_bbox(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        result = await tools["dem_map"](bbox=[6.0, 45.0, 10.0, 49.0])
+        sc = result["structuredContent"]
+
+        assert sc["center"]["lat"] == pytest.approx(47.0)
+        assert sc["center"]["lon"] == pytest.approx(8.0)
+
+    @pytest.mark.asyncio
+    async def test_default_basemap_is_terrain(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        result = await tools["dem_map"](bbox=[7.0, 46.0, 8.0, 47.0])
+        sc = result["structuredContent"]
+
+        assert sc["basemap"] == "terrain"
+
+    @pytest.mark.asyncio
+    async def test_custom_basemap(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        result = await tools["dem_map"](bbox=[7.0, 46.0, 8.0, 47.0], basemap="satellite")
+        sc = result["structuredContent"]
+
+        assert sc["basemap"] == "satellite"
+
+    @pytest.mark.asyncio
+    async def test_layer_contains_bbox_polygon(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        result = await tools["dem_map"](bbox=[7.0, 46.0, 8.0, 47.0])
+        sc = result["structuredContent"]
+
+        assert len(sc["layers"]) == 1
+        layer = sc["layers"][0]
+        assert layer["id"] == "dem-area"
+        features = layer["features"]["features"]
+        assert len(features) == 1
+        assert features[0]["geometry"]["type"] == "Polygon"
+
+    @pytest.mark.asyncio
+    async def test_bbox_polygon_corners(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        result = await tools["dem_map"](bbox=[7.0, 46.0, 8.0, 47.0])
+        sc = result["structuredContent"]
+
+        coords = sc["layers"][0]["features"]["features"][0]["geometry"]["coordinates"][0]
+        assert [7.0, 46.0] in coords
+        assert [8.0, 46.0] in coords
+        assert [8.0, 47.0] in coords
+        assert [7.0, 47.0] in coords
+
+    @pytest.mark.asyncio
+    async def test_source_in_layer_label(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        result = await tools["dem_map"](bbox=[7.0, 46.0, 8.0, 47.0], source="cop90")
+        sc = result["structuredContent"]
+
+        assert "cop90" in sc["layers"][0]["label"]
+
+    @pytest.mark.asyncio
+    async def test_zoom_reasonable_for_one_degree(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        result = await tools["dem_map"](bbox=[7.0, 46.0, 8.0, 47.0])
+        sc = result["structuredContent"]
+
+        assert 7 <= sc["zoom"] <= 12
+
+    @pytest.mark.asyncio
+    async def test_zoom_smaller_for_large_bbox(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        small_result = await tools["dem_map"](bbox=[7.0, 46.0, 8.0, 47.0])
+        large_result = await tools["dem_map"](bbox=[-10.0, 35.0, 30.0, 60.0])
+
+        assert small_result["structuredContent"]["zoom"] > large_result["structuredContent"]["zoom"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_bbox_length_raises(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        with pytest.raises(ValueError, match="west, south, east, north"):
+            await tools["dem_map"](bbox=[7.0, 46.0, 8.0])
+
+    @pytest.mark.asyncio
+    async def test_invalid_bbox_west_east_raises(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        with pytest.raises(ValueError, match="west"):
+            await tools["dem_map"](bbox=[8.0, 46.0, 7.0, 47.0])
+
+    @pytest.mark.asyncio
+    async def test_invalid_bbox_south_north_raises(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        with pytest.raises(ValueError, match="south"):
+            await tools["dem_map"](bbox=[7.0, 47.0, 8.0, 46.0])
+
+    @pytest.mark.asyncio
+    async def test_invalid_basemap_raises(self, analysis_tools):
+        tools, _ = analysis_tools
+
+        with pytest.raises(ValueError, match="basemap"):
+            await tools["dem_map"](bbox=[7.0, 46.0, 8.0, 47.0], basemap="topo")
+
+
+# ===========================================================================
 # dem_viewshed
 # ===========================================================================
 
@@ -1696,6 +1987,8 @@ class TestAnalysisToolRegistration:
             "dem_contour",
             "dem_watershed",
             "dem_profile",
+            "dem_profile_chart",
+            "dem_map",
             "dem_viewshed",
             "dem_compare_temporal",
             "dem_classify_landforms",
@@ -2194,9 +2487,7 @@ class TestDemCompareTemporal:
     @pytest.mark.asyncio
     async def test_json_success(self, analysis_tools, standard_temporal_change_result):
         tools, manager = analysis_tools
-        manager.fetch_temporal_change = AsyncMock(
-            return_value=standard_temporal_change_result
-        )
+        manager.fetch_temporal_change = AsyncMock(return_value=standard_temporal_change_result)
 
         result = await tools["dem_compare_temporal"](bbox=[7.0, 46.0, 8.0, 47.0])
         data = json.loads(result)
@@ -2211,9 +2502,7 @@ class TestDemCompareTemporal:
     @pytest.mark.asyncio
     async def test_text_success(self, analysis_tools, standard_temporal_change_result):
         tools, manager = analysis_tools
-        manager.fetch_temporal_change = AsyncMock(
-            return_value=standard_temporal_change_result
-        )
+        manager.fetch_temporal_change = AsyncMock(return_value=standard_temporal_change_result)
 
         result = await tools["dem_compare_temporal"](
             bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text"
@@ -2225,9 +2514,7 @@ class TestDemCompareTemporal:
     @pytest.mark.asyncio
     async def test_custom_sources(self, analysis_tools, standard_temporal_change_result):
         tools, manager = analysis_tools
-        manager.fetch_temporal_change = AsyncMock(
-            return_value=standard_temporal_change_result
-        )
+        manager.fetch_temporal_change = AsyncMock(return_value=standard_temporal_change_result)
 
         await tools["dem_compare_temporal"](
             bbox=[7.0, 46.0, 8.0, 47.0],
@@ -2259,9 +2546,7 @@ class TestDemCompareTemporal:
     @pytest.mark.asyncio
     async def test_fabdem_warning(self, analysis_tools, standard_temporal_change_result):
         tools, manager = analysis_tools
-        manager.fetch_temporal_change = AsyncMock(
-            return_value=standard_temporal_change_result
-        )
+        manager.fetch_temporal_change = AsyncMock(return_value=standard_temporal_change_result)
         result = await tools["dem_compare_temporal"](
             bbox=[7.0, 46.0, 8.0, 47.0], after_source="fabdem"
         )
@@ -2296,9 +2581,7 @@ class TestDemClassifyLandforms:
     @pytest.mark.asyncio
     async def test_invalid_method(self, analysis_tools):
         tools, _ = analysis_tools
-        result = await tools["dem_classify_landforms"](
-            bbox=[7.0, 46.0, 8.0, 47.0], method="cnn"
-        )
+        result = await tools["dem_classify_landforms"](bbox=[7.0, 46.0, 8.0, 47.0], method="cnn")
         data = json.loads(result)
         assert "error" in data
         assert "cnn" in data["error"]
@@ -2347,9 +2630,7 @@ class TestDemDetectAnomalies:
     @pytest.mark.asyncio
     async def test_invalid_sensitivity(self, analysis_tools):
         tools, _ = analysis_tools
-        result = await tools["dem_detect_anomalies"](
-            bbox=[7.0, 46.0, 8.0, 47.0], sensitivity=1.5
-        )
+        result = await tools["dem_detect_anomalies"](bbox=[7.0, 46.0, 8.0, 47.0], sensitivity=1.5)
         data = json.loads(result)
         assert "error" in data
 
@@ -2365,9 +2646,7 @@ class TestDemDetectAnomalies:
     @pytest.mark.asyncio
     async def test_sklearn_import_error(self, analysis_tools):
         tools, manager = analysis_tools
-        manager.fetch_anomalies = AsyncMock(
-            side_effect=ImportError("No module named 'sklearn'")
-        )
+        manager.fetch_anomalies = AsyncMock(side_effect=ImportError("No module named 'sklearn'"))
         result = await tools["dem_detect_anomalies"](bbox=[7.0, 46.0, 8.0, 47.0])
         data = json.loads(result)
         assert "error" in data
@@ -2389,6 +2668,7 @@ class TestDemDetectFeatures:
     async def test_json_success(self, analysis_tools):
         tools, manager = analysis_tools
         from chuk_mcp_dem.core.dem_manager import FeatureResult
+
         manager.fetch_features = AsyncMock(
             return_value=FeatureResult(
                 artifact_ref="feat123",
@@ -2399,9 +2679,24 @@ class TestDemDetectFeatures:
                 feature_count=3,
                 feature_summary={"ridge": 2, "peak": 1},
                 features=[
-                    {"bbox": [7, 46, 8, 47], "area_m2": 500.0, "feature_type": "ridge", "confidence": 0.7},
-                    {"bbox": [7, 46, 7.5, 46.5], "area_m2": 300.0, "feature_type": "ridge", "confidence": 0.6},
-                    {"bbox": [7.5, 46.5, 8, 47], "area_m2": 100.0, "feature_type": "peak", "confidence": 0.9},
+                    {
+                        "bbox": [7, 46, 8, 47],
+                        "area_m2": 500.0,
+                        "feature_type": "ridge",
+                        "confidence": 0.7,
+                    },
+                    {
+                        "bbox": [7, 46, 7.5, 46.5],
+                        "area_m2": 300.0,
+                        "feature_type": "ridge",
+                        "confidence": 0.6,
+                    },
+                    {
+                        "bbox": [7.5, 46.5, 8, 47],
+                        "area_m2": 100.0,
+                        "feature_type": "peak",
+                        "confidence": 0.9,
+                    },
                 ],
                 dtype="float32",
             )
@@ -2418,6 +2713,7 @@ class TestDemDetectFeatures:
     async def test_text_output(self, analysis_tools):
         tools, manager = analysis_tools
         from chuk_mcp_dem.core.dem_manager import FeatureResult
+
         manager.fetch_features = AsyncMock(
             return_value=FeatureResult(
                 artifact_ref="feat123",
@@ -2428,24 +2724,30 @@ class TestDemDetectFeatures:
                 feature_count=2,
                 feature_summary={"valley": 2},
                 features=[
-                    {"bbox": [7, 46, 8, 47], "area_m2": 500.0, "feature_type": "valley", "confidence": 0.7},
-                    {"bbox": [7, 46, 7.5, 46.5], "area_m2": 300.0, "feature_type": "valley", "confidence": 0.6},
+                    {
+                        "bbox": [7, 46, 8, 47],
+                        "area_m2": 500.0,
+                        "feature_type": "valley",
+                        "confidence": 0.7,
+                    },
+                    {
+                        "bbox": [7, 46, 7.5, 46.5],
+                        "area_m2": 300.0,
+                        "feature_type": "valley",
+                        "confidence": 0.6,
+                    },
                 ],
                 dtype="float32",
             )
         )
 
-        result = await tools["dem_detect_features"](
-            bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text"
-        )
+        result = await tools["dem_detect_features"](bbox=[7.0, 46.0, 8.0, 47.0], output_mode="text")
         assert "Feature Detection:" in result
 
     @pytest.mark.asyncio
     async def test_invalid_method(self, analysis_tools):
         tools, _ = analysis_tools
-        result = await tools["dem_detect_features"](
-            bbox=[7.0, 46.0, 8.0, 47.0], method="bad"
-        )
+        result = await tools["dem_detect_features"](bbox=[7.0, 46.0, 8.0, 47.0], method="bad")
         data = json.loads(result)
         assert "error" in data
         assert "Invalid feature method" in data["error"]
@@ -2476,92 +2778,22 @@ class TestDemDetectFeatures:
 class TestDemInterpret:
     """Tests for the dem_interpret tool."""
 
-    def _mock_sampling_result(self, text="The terrain shows a broad valley."):
-        """Create a mock MCP sampling result."""
-        mock_result = MagicMock()
-        mock_result.model = "claude-3-opus-20240229"
-        mock_block = MagicMock()
-        mock_block.text = text
-        mock_result.content = [mock_block]
-        return mock_result
+    def _mock_create_message(self, text="The terrain shows a broad valley."):
+        """Return an async function that mimics create_message() returning a dict."""
 
-    def _patch_mcp_sampling(self, mock_ctx):
-        """Return a context manager that patches the lazy mcp imports.
+        async def _create_msg(**kwargs):
+            return {
+                "model": "claude-3-opus-20240229",
+                "content": {"type": "text", "text": text},
+            }
 
-        The dem_interpret tool does ``from mcp.server.lowlevel.server import
-        request_ctx`` inside the function body.  We inject mock modules into
-        ``sys.modules`` so that import resolves to our mock.
-        """
-        import sys
-        from unittest.mock import patch
-
-        mock_request_ctx = MagicMock()
-        mock_request_ctx.get.return_value = mock_ctx
-
-        mock_server_mod = MagicMock()
-        mock_server_mod.request_ctx = mock_request_ctx
-
-        mock_types_mod = MagicMock()
-        # The tool imports SamplingMessage, TextContent, ImageContent
-        mock_types_mod.SamplingMessage = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
-        mock_types_mod.TextContent = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
-        mock_types_mod.ImageContent = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
-
-        modules = {
-            "mcp": MagicMock(),
-            "mcp.server": MagicMock(),
-            "mcp.server.lowlevel": MagicMock(),
-            "mcp.server.lowlevel.server": mock_server_mod,
-            "mcp.types": mock_types_mod,
-        }
-        return patch.dict(sys.modules, modules)
-
-    def _patch_mcp_import_error(self):
-        """Return a context manager that makes the mcp import raise ImportError."""
-        import sys
-        from unittest.mock import patch
-
-        # Remove any cached mcp modules so the import fails
-        sentinel = object()
-        modules_to_mask = {
-            k: sentinel
-            for k in list(sys.modules.keys())
-            if k == "mcp" or k.startswith("mcp.")
-        }
-        # Map sentinel → raise ImportError by using None (causes ImportError)
-        blocked = {k: None for k in modules_to_mask}
-        # Also ensure "mcp.server.lowlevel.server" specifically is absent
-        blocked["mcp.server.lowlevel.server"] = None
-        return patch.dict(sys.modules, blocked)
-
-    def _patch_mcp_lookup_error(self, mock_ctx_with_error):
-        """Patch so request_ctx.get() raises LookupError."""
-        import sys
-        from unittest.mock import patch
-
-        mock_request_ctx = MagicMock()
-        mock_request_ctx.get.side_effect = LookupError("no context")
-
-        mock_server_mod = MagicMock()
-        mock_server_mod.request_ctx = mock_request_ctx
-
-        mock_types_mod = MagicMock()
-        mock_types_mod.SamplingMessage = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
-        mock_types_mod.TextContent = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
-        mock_types_mod.ImageContent = MagicMock(side_effect=lambda **kw: MagicMock(**kw))
-
-        modules = {
-            "mcp": MagicMock(),
-            "mcp.server": MagicMock(),
-            "mcp.server.lowlevel": MagicMock(),
-            "mcp.server.lowlevel.server": mock_server_mod,
-            "mcp.types": mock_types_mod,
-        }
-        return patch.dict(sys.modules, modules)
+        return _create_msg
 
     @pytest.mark.asyncio
     async def test_json_success(self, analysis_tools):
         """dem_interpret success path returns valid JSON InterpretResponse."""
+        from unittest.mock import patch
+
         from chuk_mcp_dem.core.dem_manager import InterpretResult
 
         tools, manager = analysis_tools
@@ -2573,12 +2805,10 @@ class TestDemInterpret:
             )
         )
 
-        mock_ctx = MagicMock()
-        mock_ctx.session.create_message = AsyncMock(
-            return_value=self._mock_sampling_result()
-        )
-
-        with self._patch_mcp_sampling(mock_ctx):
+        with patch(
+            "chuk_mcp_server.context.create_message",
+            new=self._mock_create_message(),
+        ):
             result = await tools["dem_interpret"](artifact_ref="dem/abc123.tif")
 
         data = json.loads(result)
@@ -2591,6 +2821,8 @@ class TestDemInterpret:
     @pytest.mark.asyncio
     async def test_text_output_mode(self, analysis_tools):
         """dem_interpret with output_mode='text' returns readable text."""
+        from unittest.mock import patch
+
         from chuk_mcp_dem.core.dem_manager import InterpretResult
 
         tools, manager = analysis_tools
@@ -2602,15 +2834,11 @@ class TestDemInterpret:
             )
         )
 
-        mock_ctx = MagicMock()
-        mock_ctx.session.create_message = AsyncMock(
-            return_value=self._mock_sampling_result("Ridge system detected.")
-        )
-
-        with self._patch_mcp_sampling(mock_ctx):
-            result = await tools["dem_interpret"](
-                artifact_ref="dem/abc.tif", output_mode="text"
-            )
+        with patch(
+            "chuk_mcp_server.context.create_message",
+            new=self._mock_create_message("Ridge system detected."),
+        ):
+            result = await tools["dem_interpret"](artifact_ref="dem/abc.tif", output_mode="text")
 
         assert "Terrain Interpretation" in result
         assert "Ridge system detected" in result
@@ -2620,16 +2848,17 @@ class TestDemInterpret:
         """Invalid context returns error response."""
         tools, _ = analysis_tools
 
-        result = await tools["dem_interpret"](
-            artifact_ref="dem/abc.tif", context="bad_context"
-        )
+        result = await tools["dem_interpret"](artifact_ref="dem/abc.tif", context="bad_context")
         data = json.loads(result)
         assert "error" in data
         assert "Invalid interpretation context" in data["error"]
 
     @pytest.mark.asyncio
-    async def test_sampling_not_available_lookup_error(self, analysis_tools):
-        """LookupError from request_ctx.get() returns graceful error."""
+    async def test_sampling_not_available(self, analysis_tools):
+        """RuntimeError from create_message returns graceful error."""
+        from unittest.mock import AsyncMock as _AsyncMock
+        from unittest.mock import patch
+
         from chuk_mcp_dem.core.dem_manager import InterpretResult
 
         tools, manager = analysis_tools
@@ -2641,7 +2870,10 @@ class TestDemInterpret:
             )
         )
 
-        with self._patch_mcp_lookup_error(None):
+        with patch(
+            "chuk_mcp_server.context.create_message",
+            new=_AsyncMock(side_effect=RuntimeError("sampling unavailable")),
+        ):
             result = await tools["dem_interpret"](artifact_ref="dem/abc.tif")
 
         data = json.loads(result)
@@ -2653,9 +2885,7 @@ class TestDemInterpret:
         """If prepare_for_interpretation fails, returns error about artifact."""
         tools, manager = analysis_tools
 
-        manager.prepare_for_interpretation = AsyncMock(
-            side_effect=FileNotFoundError("not found")
-        )
+        manager.prepare_for_interpretation = AsyncMock(side_effect=FileNotFoundError("not found"))
 
         result = await tools["dem_interpret"](artifact_ref="dem/missing.tif")
         data = json.loads(result)
@@ -2665,6 +2895,8 @@ class TestDemInterpret:
     @pytest.mark.asyncio
     async def test_empty_question_handled(self, analysis_tools):
         """Empty string question is handled (no crash, question=None in output)."""
+        from unittest.mock import patch
+
         from chuk_mcp_dem.core.dem_manager import InterpretResult
 
         tools, manager = analysis_tools
@@ -2676,15 +2908,11 @@ class TestDemInterpret:
             )
         )
 
-        mock_ctx = MagicMock()
-        mock_ctx.session.create_message = AsyncMock(
-            return_value=self._mock_sampling_result("Analysis complete.")
-        )
-
-        with self._patch_mcp_sampling(mock_ctx):
-            result = await tools["dem_interpret"](
-                artifact_ref="dem/abc.tif", question=""
-            )
+        with patch(
+            "chuk_mcp_server.context.create_message",
+            new=self._mock_create_message("Analysis complete."),
+        ):
+            result = await tools["dem_interpret"](artifact_ref="dem/abc.tif", question="")
 
         data = json.loads(result)
         assert data["question"] is None  # empty string converts to None
@@ -2693,6 +2921,8 @@ class TestDemInterpret:
     @pytest.mark.asyncio
     async def test_with_specific_question(self, analysis_tools):
         """Specific question is forwarded and appears in output."""
+        from unittest.mock import patch
+
         from chuk_mcp_dem.core.dem_manager import InterpretResult
 
         tools, manager = analysis_tools
@@ -2704,12 +2934,10 @@ class TestDemInterpret:
             )
         )
 
-        mock_ctx = MagicMock()
-        mock_ctx.session.create_message = AsyncMock(
-            return_value=self._mock_sampling_result("Slopes are gentle in the north.")
-        )
-
-        with self._patch_mcp_sampling(mock_ctx):
+        with patch(
+            "chuk_mcp_server.context.create_message",
+            new=self._mock_create_message("Slopes are gentle in the north."),
+        ):
             result = await tools["dem_interpret"](
                 artifact_ref="dem/slope.tif",
                 context="geological",
@@ -2724,6 +2952,8 @@ class TestDemInterpret:
     @pytest.mark.asyncio
     async def test_archaeological_context(self, analysis_tools):
         """Archaeological survey context is accepted and passed through."""
+        from unittest.mock import patch
+
         from chuk_mcp_dem.core.dem_manager import InterpretResult
 
         tools, manager = analysis_tools
@@ -2735,12 +2965,10 @@ class TestDemInterpret:
             )
         )
 
-        mock_ctx = MagicMock()
-        mock_ctx.session.create_message = AsyncMock(
-            return_value=self._mock_sampling_result("Possible earthwork detected.")
-        )
-
-        with self._patch_mcp_sampling(mock_ctx):
+        with patch(
+            "chuk_mcp_server.context.create_message",
+            new=self._mock_create_message("Possible earthwork detected."),
+        ):
             result = await tools["dem_interpret"](
                 artifact_ref="dem/abc.tif",
                 context="archaeological_survey",

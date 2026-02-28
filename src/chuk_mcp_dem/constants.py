@@ -204,10 +204,19 @@ DEFAULT_WINDOW_SIZE = 3
 # Terrain derivatives (available analysis types)
 TERRAIN_DERIVATIVES = ["hillshade", "slope", "aspect", "curvature", "tri", "contour", "watershed"]
 ANALYSIS_TOOLS = [
-    "profile", "viewshed", "temporal_change", "landforms", "anomalies", "features",
+    "profile",
+    "viewshed",
+    "temporal_change",
+    "landforms",
+    "anomalies",
+    "features",
 ]
+# Total registered tools: 4 discovery + 5 download + 14 analysis + 2 view = 25
+# Update when adding or removing tools.
+TOOL_COUNT = 25
 OUTPUT_FORMATS = ["geotiff", "png"]
 SLOPE_UNITS = ["degrees", "percent"]
+BASEMAP_OPTIONS = ["terrain", "satellite", "osm", "dark"]
 
 # Contour defaults
 DEFAULT_CONTOUR_INTERVAL_M = 100.0
@@ -222,8 +231,15 @@ DEFAULT_SIGNIFICANCE_THRESHOLD_M = 1.0
 
 # Landform classification
 LANDFORM_CLASSES = [
-    "plain", "ridge", "valley", "plateau", "escarpment",
-    "depression", "saddle", "terrace", "alluvial_fan",
+    "plain",
+    "ridge",
+    "valley",
+    "plateau",
+    "escarpment",
+    "depression",
+    "saddle",
+    "terrace",
+    "alluvial_fan",
 ]
 LANDFORM_METHODS = ["rule_based"]
 
@@ -243,6 +259,31 @@ INTERPRETATION_CONTEXTS = [
     "military_history",
     "urban_planning",
 ]
+
+INTERPRETATION_CONTEXT_DESCRIPTIONS = {
+    "general": "terrain and elevation analysis",
+    "archaeological_survey": (
+        "archaeological landscape survey, identifying earthworks, "
+        "barrows, enclosures, field systems, and anthropogenic terrain "
+        "modifications"
+    ),
+    "flood_risk": (
+        "flood risk assessment, identifying drainage channels, "
+        "flood plains, catchment areas, and vulnerable low-lying terrain"
+    ),
+    "geological": (
+        "geological analysis, identifying rock formations, fault lines, "
+        "erosion patterns, and geomorphological processes"
+    ),
+    "military_history": (
+        "military terrain analysis, identifying defensive positions, "
+        "line-of-sight advantages, natural barriers, and strategic terrain"
+    ),
+    "urban_planning": (
+        "urban planning and development, identifying buildable terrain, "
+        "slope constraints, drainage patterns, and natural hazards"
+    ),
+}
 
 # Cache & retry
 TILE_CACHE_MAX_BYTES = 100 * 1024 * 1024  # 100 MB total
@@ -294,8 +335,7 @@ class ErrorMessages:
     INVALID_LANDFORM_METHOD = "Invalid landform method '{}'. Available: {}"
     INVALID_FEATURE_METHOD = "Invalid feature method '{}'. Available: {}"
     SKLEARN_NOT_AVAILABLE = (
-        "scikit-learn is required for anomaly detection. "
-        "Install with: pip install chuk-mcp-dem[ml]"
+        "scikit-learn is required for anomaly detection. Install with: pip install chuk-mcp-dem[ml]"
     )
     FEATURE_DETECTION_NOT_AVAILABLE = (
         "CNN feature detection is not yet available. "
@@ -310,6 +350,7 @@ class ErrorMessages:
     )
     INVALID_INTERPRETATION_CONTEXT = "Invalid interpretation context '{}'. Available: {}"
     INVALID_ARTIFACT_REF = "Artifact '{}' not found or could not be retrieved"
+    INVALID_BASEMAP = "Invalid basemap '{}'. Available: {}"
 
 
 class SuccessMessages:

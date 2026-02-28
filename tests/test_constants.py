@@ -40,7 +40,6 @@ from chuk_mcp_dem.constants import (
     get_license_warning,
 )
 
-
 # ── ServerConfig ────────────────────────────────────────────────────
 
 

@@ -123,9 +123,7 @@ async def main() -> None:
     print(f"  Artifact: {landform_result['artifact_ref']}")
     print(f"  Dominant landform: {landform_result['dominant_landform']}")
     print("  Class distribution:")
-    for cls, pct in sorted(
-        landform_result["class_distribution"].items(), key=lambda x: -x[1]
-    ):
+    for cls, pct in sorted(landform_result["class_distribution"].items(), key=lambda x: -x[1]):
         if pct > 0:
             print(f"    {cls}: {pct:.1f}%")
 

@@ -1253,9 +1253,7 @@ class DEMManager:
         # Fetch before tiles
         before_urls = self._get_tile_urls(before_source, bbox)
         if not before_urls:
-            raise ValueError(
-                ErrorMessages.COVERAGE_ERROR.format(src_before["name"], bbox)
-            )
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src_before["name"], bbox))
         before_elev, crs, tx_before = await asyncio.to_thread(
             raster_io.read_and_merge_tiles, before_urls, bbox
         )
@@ -1263,12 +1261,8 @@ class DEMManager:
         # Fetch after tiles
         after_urls = self._get_tile_urls(after_source, bbox)
         if not after_urls:
-            raise ValueError(
-                ErrorMessages.COVERAGE_ERROR.format(src_after["name"], bbox)
-            )
-        after_elev, _, _ = await asyncio.to_thread(
-            raster_io.read_and_merge_tiles, after_urls, bbox
-        )
+            raise ValueError(ErrorMessages.COVERAGE_ERROR.format(src_after["name"], bbox))
+        after_elev, _, _ = await asyncio.to_thread(raster_io.read_and_merge_tiles, after_urls, bbox)
 
         # Fill voids
         before_elev = await asyncio.to_thread(raster_io.fill_voids, before_elev)
@@ -1287,7 +1281,10 @@ class DEMManager:
         # Compute change
         change, regions = await asyncio.to_thread(
             raster_io.compute_elevation_change,
-            before_elev, after_elev, tx_before, significance_threshold_m,
+            before_elev,
+            after_elev,
+            tx_before,
+            significance_threshold_m,
         )
 
         # Compute volumes using approximate pixel area
@@ -1295,8 +1292,7 @@ class DEMManager:
         cellsize_y = abs(float(tx_before[4]))
         mid_lat = (bbox[1] + bbox[3]) / 2.0
         pixel_area_m2 = (
-            cellsize_x * 111320.0 * math.cos(math.radians(mid_lat))
-            * cellsize_y * 111320.0
+            cellsize_x * 111320.0 * math.cos(math.radians(mid_lat)) * cellsize_y * 111320.0
         )
         positive = change[change > 0]
         negative = change[change < 0]
@@ -1392,23 +1388,22 @@ class DEMManager:
         dominant = max(distribution, key=distribution.get)  # type: ignore[arg-type]
 
         if output_format == "png":
-            data_bytes = await asyncio.to_thread(
-                raster_io.landform_to_png, landforms
-            )
+            data_bytes = await asyncio.to_thread(raster_io.landform_to_png, landforms)
             suffix = ".png"
         else:
             data_bytes = await asyncio.to_thread(
                 raster_io.arrays_to_geotiff,
-                landforms.astype(np.float32), crs, transform, "float32",
+                landforms.astype(np.float32),
+                crs,
+                transform,
+                "float32",
             )
             suffix = ".tif"
 
         preview_ref = None
         if output_format != "png":
             try:
-                preview_bytes = await asyncio.to_thread(
-                    raster_io.landform_to_png, landforms
-                )
+                preview_bytes = await asyncio.to_thread(raster_io.landform_to_png, landforms)
                 preview_ref = await self._store_raster(
                     preview_bytes,
                     {"type": "landform_preview", "source": source, "format": "png"},
@@ -1482,9 +1477,7 @@ class DEMManager:
         preview_ref = None
         if output_format != "png":
             try:
-                preview_bytes = await asyncio.to_thread(
-                    raster_io.anomaly_to_png, scores
-                )
+                preview_bytes = await asyncio.to_thread(raster_io.anomaly_to_png, scores)
                 preview_ref = await self._store_raster(
                     preview_bytes,
                     {"type": "anomaly_preview", "source": source, "format": "png"},
@@ -1564,9 +1557,7 @@ class DEMManager:
         preview_ref = None
         if output_format != "png":
             try:
-                preview_bytes = await asyncio.to_thread(
-                    raster_io.feature_to_png, feature_map
-                )
+                preview_bytes = await asyncio.to_thread(raster_io.feature_to_png, feature_map)
                 preview_ref = await self._store_raster(
                     preview_bytes,
                     {"type": "feature_preview", "source": source, "format": "png"},

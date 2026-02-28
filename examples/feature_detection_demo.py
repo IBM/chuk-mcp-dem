@@ -149,9 +149,7 @@ async def main() -> None:
     ax = axes[1, 0]
     cmap = ListedColormap(FEATURE_COLORS)
     im = ax.imshow(feature_map, cmap=cmap, vmin=-0.5, vmax=6.5, interpolation="nearest")
-    ax.set_title(
-        f"Feature Map ({feature_result['feature_count']} regions)", fontsize=13
-    )
+    ax.set_title(f"Feature Map ({feature_result['feature_count']} regions)", fontsize=13)
     ax.axis("off")
     legend_patches = [
         Patch(facecolor=FEATURE_COLORS[i], label=FEATURE_CLASSES[i])
@@ -165,13 +163,15 @@ async def main() -> None:
     ax.imshow(hillshade, cmap="gray", vmin=0, vmax=255, alpha=0.7)
     feature_masked = np.ma.masked_where(feature_map < 0.5, feature_map)
     ax.imshow(
-        feature_masked, cmap=cmap, vmin=-0.5, vmax=6.5,
-        interpolation="nearest", alpha=0.6,
+        feature_masked,
+        cmap=cmap,
+        vmin=-0.5,
+        vmax=6.5,
+        interpolation="nearest",
+        alpha=0.6,
     )
     n_classified = int(np.sum(feature_map > 0.5))
-    ax.set_title(
-        f"Feature Overlay ({n_classified} classified pixels)", fontsize=13
-    )
+    ax.set_title(f"Feature Overlay ({n_classified} classified pixels)", fontsize=13)
     ax.axis("off")
 
     fig.suptitle(

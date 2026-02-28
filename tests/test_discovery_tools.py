@@ -21,7 +21,6 @@ from chuk_mcp_dem.constants import (
 )
 from chuk_mcp_dem.tools.discovery.api import register_discovery_tools
 
-
 # ── Fixtures ───────────────────────────────────────────────────────
 
 
@@ -546,10 +545,12 @@ class TestDemCapabilities:
         data = json.loads(result)
         assert len(data["output_formats"]) == 2
 
-    async def test_tool_count_is_twenty_two(self, discovery_tools):
+    async def test_tool_count(self, discovery_tools):
+        from chuk_mcp_dem.constants import TOOL_COUNT
+
         result = await discovery_tools["dem_capabilities"](output_mode="json")
         data = json.loads(result)
-        assert data["tool_count"] == 22
+        assert data["tool_count"] == TOOL_COUNT
 
     async def test_llm_guidance_present(self, discovery_tools):
         result = await discovery_tools["dem_capabilities"](output_mode="json")

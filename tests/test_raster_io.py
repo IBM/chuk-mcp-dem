@@ -8,7 +8,6 @@ import numpy as np
 import pytest
 from PIL import Image
 
-
 # ---------------------------------------------------------------------------
 # read_dem_tile
 # ---------------------------------------------------------------------------
@@ -2335,7 +2334,9 @@ class TestComputeElevationChange:
         from chuk_mcp_dem.core.raster_io import compute_elevation_change
 
         change, regions = compute_elevation_change(
-            sample_elevation, sample_elevation, sample_transform,
+            sample_elevation,
+            sample_elevation,
+            sample_transform,
         )
         assert np.allclose(change, 0.0)
         assert regions == []
@@ -2346,7 +2347,9 @@ class TestComputeElevationChange:
 
         after = sample_elevation + 5.0
         change, regions = compute_elevation_change(
-            sample_elevation, after, sample_transform,
+            sample_elevation,
+            after,
+            sample_transform,
         )
         assert np.allclose(change, 5.0)
         assert len(regions) >= 1
@@ -2358,7 +2361,9 @@ class TestComputeElevationChange:
 
         after = sample_elevation - 5.0
         change, regions = compute_elevation_change(
-            sample_elevation, after, sample_transform,
+            sample_elevation,
+            after,
+            sample_transform,
         )
         assert np.allclose(change, -5.0)
         assert len(regions) >= 1
@@ -2370,7 +2375,9 @@ class TestComputeElevationChange:
 
         after = sample_elevation + 0.5
         change, regions = compute_elevation_change(
-            sample_elevation, after, sample_transform,
+            sample_elevation,
+            after,
+            sample_transform,
             significance_threshold_m=1.0,
         )
         assert np.allclose(change, 0.5, rtol=1e-5, atol=1e-4)
@@ -2382,7 +2389,9 @@ class TestComputeElevationChange:
 
         after = sample_elevation + 2.0
         change, _ = compute_elevation_change(
-            sample_elevation, after, sample_transform,
+            sample_elevation,
+            after,
+            sample_transform,
         )
         assert change.dtype == np.float32
 
@@ -2392,7 +2401,9 @@ class TestComputeElevationChange:
 
         after = sample_elevation + 2.0
         change, _ = compute_elevation_change(
-            sample_elevation, after, sample_transform,
+            sample_elevation,
+            after,
+            sample_transform,
         )
         assert change.shape == sample_elevation.shape
 
@@ -2402,7 +2413,9 @@ class TestComputeElevationChange:
 
         after = sample_elevation + 5.0
         _, regions = compute_elevation_change(
-            sample_elevation, after, sample_transform,
+            sample_elevation,
+            after,
+            sample_transform,
         )
         assert len(regions) >= 1
         expected_keys = {"bbox", "area_m2", "mean_change_m", "max_change_m", "change_type"}
@@ -2419,7 +2432,9 @@ class TestComputeElevationChange:
         after[10, 10] = np.nan
 
         change, regions = compute_elevation_change(
-            before, after, sample_transform,
+            before,
+            after,
+            sample_transform,
         )
         assert change.shape == (20, 20)
         # NaN positions should be NaN in the change array
@@ -2468,7 +2483,7 @@ class TestChangeToPng:
         img = Image.open(io.BytesIO(png_bytes))
         pixels = np.array(img)
         assert np.all(pixels[:, :, 0] == 255)  # Red channel
-        assert np.all(pixels[:, :, 1] == 0)    # Green channel
+        assert np.all(pixels[:, :, 1] == 0)  # Green channel
 
     def test_negative_change_is_blue(self):
         """Negative change renders with B=255 and G=0."""
@@ -2479,7 +2494,7 @@ class TestChangeToPng:
         img = Image.open(io.BytesIO(png_bytes))
         pixels = np.array(img)
         assert np.all(pixels[:, :, 2] == 255)  # Blue channel
-        assert np.all(pixels[:, :, 1] == 0)    # Green channel
+        assert np.all(pixels[:, :, 1] == 0)  # Green channel
 
     def test_output_dimensions_match(self):
         """PNG dimensions match input array shape."""
@@ -2627,7 +2642,9 @@ class TestComputeAnomalyScores:
         from chuk_mcp_dem.core.raster_io import compute_anomaly_scores
 
         scores, _ = compute_anomaly_scores(
-            small_elevation, small_transform, sensitivity=0.1,
+            small_elevation,
+            small_transform,
+            sensitivity=0.1,
         )
         assert scores.shape == small_elevation.shape
 
@@ -2636,7 +2653,9 @@ class TestComputeAnomalyScores:
         from chuk_mcp_dem.core.raster_io import compute_anomaly_scores
 
         scores, _ = compute_anomaly_scores(
-            small_elevation, small_transform, sensitivity=0.1,
+            small_elevation,
+            small_transform,
+            sensitivity=0.1,
         )
         assert np.all(scores >= 0.0)
         assert np.all(scores <= 1.0)
@@ -2646,7 +2665,9 @@ class TestComputeAnomalyScores:
         from chuk_mcp_dem.core.raster_io import compute_anomaly_scores
 
         scores, _ = compute_anomaly_scores(
-            small_elevation, small_transform, sensitivity=0.1,
+            small_elevation,
+            small_transform,
+            sensitivity=0.1,
         )
         assert scores.dtype == np.float32
 
@@ -2655,7 +2676,9 @@ class TestComputeAnomalyScores:
         from chuk_mcp_dem.core.raster_io import compute_anomaly_scores
 
         _, anomalies = compute_anomaly_scores(
-            small_elevation, small_transform, sensitivity=0.1,
+            small_elevation,
+            small_transform,
+            sensitivity=0.1,
         )
         expected_keys = {"bbox", "area_m2", "confidence", "mean_anomaly_score"}
         for anomaly in anomalies:
@@ -2688,7 +2711,7 @@ class TestAnomalyToPng:
         png_bytes = anomaly_to_png(scores)
         img = Image.open(io.BytesIO(png_bytes))
         pixels = np.array(img)
-        assert np.all(pixels[:, :, 0] == 0)    # Red channel
+        assert np.all(pixels[:, :, 0] == 0)  # Red channel
         assert np.all(pixels[:, :, 1] == 255)  # Green channel
 
     def test_output_dimensions_match(self):
@@ -2711,27 +2734,32 @@ class TestComputeFeatureDetection:
 
     def test_returns_correct_shape(self, sample_elevation, sample_transform):
         from chuk_mcp_dem.core.raster_io import compute_feature_detection
+
         feature_map, features = compute_feature_detection(sample_elevation, sample_transform)
         assert feature_map.shape == sample_elevation.shape
 
     def test_output_dtype_float32(self, sample_elevation, sample_transform):
         from chuk_mcp_dem.core.raster_io import compute_feature_detection
+
         feature_map, _ = compute_feature_detection(sample_elevation, sample_transform)
         assert feature_map.dtype == np.float32
 
     def test_feature_values_in_range(self, sample_elevation, sample_transform):
         from chuk_mcp_dem.core.raster_io import compute_feature_detection
+
         feature_map, _ = compute_feature_detection(sample_elevation, sample_transform)
         assert float(np.min(feature_map)) >= 0
         assert float(np.max(feature_map)) <= 6
 
     def test_returns_features_list(self, sample_elevation, sample_transform):
         from chuk_mcp_dem.core.raster_io import compute_feature_detection
+
         _, features = compute_feature_detection(sample_elevation, sample_transform)
         assert isinstance(features, list)
 
     def test_feature_dict_keys(self, sample_elevation, sample_transform):
         from chuk_mcp_dem.core.raster_io import compute_feature_detection
+
         _, features = compute_feature_detection(sample_elevation, sample_transform)
         for f in features:
             assert "bbox" in f
@@ -2741,6 +2769,7 @@ class TestComputeFeatureDetection:
 
     def test_feature_types_valid(self, sample_elevation, sample_transform):
         from chuk_mcp_dem.core.raster_io import compute_feature_detection
+
         valid_types = {"peak", "ridge", "valley", "cliff", "saddle", "channel"}
         _, features = compute_feature_detection(sample_elevation, sample_transform)
         for f in features:
@@ -2748,12 +2777,14 @@ class TestComputeFeatureDetection:
 
     def test_confidence_in_range(self, sample_elevation, sample_transform):
         from chuk_mcp_dem.core.raster_io import compute_feature_detection
+
         _, features = compute_feature_detection(sample_elevation, sample_transform)
         for f in features:
             assert 0.0 <= f["confidence"] <= 1.0
 
     def test_flat_terrain_few_features(self, sample_transform):
         from chuk_mcp_dem.core.raster_io import compute_feature_detection
+
         flat = np.full((20, 20), 100.0, dtype=np.float32)
         feature_map, features = compute_feature_detection(flat, sample_transform)
         # Flat terrain should have very few or no features
@@ -2761,6 +2792,7 @@ class TestComputeFeatureDetection:
 
     def test_invalid_method_raises(self, sample_elevation, sample_transform):
         from chuk_mcp_dem.core.raster_io import compute_feature_detection
+
         with pytest.raises(ValueError, match="Invalid feature method"):
             compute_feature_detection(sample_elevation, sample_transform, method="bad")
 
@@ -2775,6 +2807,7 @@ class TestFeatureToPng:
 
     def test_produces_valid_png(self):
         from chuk_mcp_dem.core.raster_io import feature_to_png
+
         features = np.zeros((10, 10), dtype=np.float32)
         result = feature_to_png(features)
         assert isinstance(result, bytes)
@@ -2782,15 +2815,18 @@ class TestFeatureToPng:
 
     def test_output_dimensions_match(self):
         from chuk_mcp_dem.core.raster_io import feature_to_png
+
         features = np.array([[0, 1, 2], [3, 4, 5]], dtype=np.float32)
         result = feature_to_png(features)
         from PIL import Image
         import io as _io
+
         img = Image.open(_io.BytesIO(result))
         assert img.size == (3, 2)  # width, height
 
     def test_all_classes_render(self):
         from chuk_mcp_dem.core.raster_io import feature_to_png
+
         # Create array with all 7 classes (0-6)
         features = np.arange(7, dtype=np.float32).reshape(1, 7)
         result = feature_to_png(features)
@@ -2869,4 +2905,3 @@ class TestRasterToPng:
         with patch("rasterio.open", side_effect=Exception("Cannot read")):
             with pytest.raises(Exception, match="Cannot read"):
                 raster_to_png(b"")
-

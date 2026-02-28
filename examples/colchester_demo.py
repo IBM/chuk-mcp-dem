@@ -156,9 +156,7 @@ async def main() -> None:
     # ----------------------------------------------------------
     print("--- Step 4: Computing slope ---")
 
-    slope_result = await runner.run(
-        "dem_slope", bbox=BBOX, source=SOURCE, units="degrees"
-    )
+    slope_result = await runner.run("dem_slope", bbox=BBOX, source=SOURCE, units="degrees")
     if "error" in slope_result:
         print(f"  ERROR: {slope_result['error']}")
         sys.exit(1)
@@ -252,12 +250,21 @@ async def main() -> None:
     fig.suptitle(
         "Colchester (Camulodunum) -- Archaeological Anomaly Detection\n"
         f"Isolation Forest + CNN-Inspired Features | Copernicus GLO-30 | bbox: {BBOX}",
-        fontsize=14, fontweight="bold", y=0.98,
+        fontsize=14,
+        fontweight="bold",
+        y=0.98,
     )
 
     gs = GridSpec(
-        2, 3, figure=fig, hspace=0.25, wspace=0.25,
-        top=0.91, bottom=0.04, left=0.03, right=0.97,
+        2,
+        3,
+        figure=fig,
+        hspace=0.25,
+        wspace=0.25,
+        top=0.91,
+        bottom=0.04,
+        left=0.03,
+        right=0.97,
     )
 
     # --- Row 1: Hillshade (low), Hillshade (standard), Slope ---
@@ -288,8 +295,7 @@ async def main() -> None:
     ax = fig.add_subplot(gs[1, 0])
     im = ax.imshow(anomaly_scores, cmap="YlOrBr", vmin=0, vmax=1)
     ax.set_title(
-        f"Anomaly Scores ({anomaly_result['anomaly_count']} regions, "
-        f"sensitivity={SENSITIVITY})",
+        f"Anomaly Scores ({anomaly_result['anomaly_count']} regions, sensitivity={SENSITIVITY})",
         fontsize=10,
     )
     ax.axis("off")
@@ -302,9 +308,7 @@ async def main() -> None:
     overlay = np.ma.masked_where(~anomaly_mask, anomaly_scores)
     n_flagged = int(anomaly_mask.sum())
     im = ax.imshow(overlay, cmap="YlOrBr", vmin=0.5, vmax=1, alpha=0.7)
-    ax.set_title(
-        f"Anomaly Overlay on Low-Angle Hillshade ({n_flagged} px)", fontsize=10
-    )
+    ax.set_title(f"Anomaly Overlay on Low-Angle Hillshade ({n_flagged} px)", fontsize=10)
     ax.axis("off")
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Anomaly score")
 
@@ -313,15 +317,14 @@ async def main() -> None:
     if feature_map is not None:
         feat_cmap = ListedColormap(FEATURE_COLORS)
         ax.imshow(
-            feature_map, cmap=feat_cmap, vmin=-0.5, vmax=6.5,
+            feature_map,
+            cmap=feat_cmap,
+            vmin=-0.5,
+            vmax=6.5,
             interpolation="nearest",
         )
-        ax.set_title(
-            f"Feature Detection ({feature_result['feature_count']} regions)", fontsize=10
-        )
-        unique_classes = sorted(
-            set(int(v) for v in np.unique(feature_map) if v > 0)
-        )
+        ax.set_title(f"Feature Detection ({feature_result['feature_count']} regions)", fontsize=10)
+        unique_classes = sorted(set(int(v) for v in np.unique(feature_map) if v > 0))
         legend_patches = [
             Patch(facecolor=FEATURE_COLORS[c], label=FEATURE_CLASSES[c])
             for c in unique_classes
@@ -331,9 +334,14 @@ async def main() -> None:
             ax.legend(handles=legend_patches, loc="lower right", fontsize=7, framealpha=0.8)
     else:
         ax.text(
-            0.5, 0.5, "Feature detection\nfailed",
-            transform=ax.transAxes, ha="center", va="center",
-            fontsize=14, color="red",
+            0.5,
+            0.5,
+            "Feature detection\nfailed",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=14,
+            color="red",
         )
         ax.set_title("Feature Detection (error)", fontsize=10)
     ax.axis("off")
@@ -362,8 +370,10 @@ async def main() -> None:
     print(f"  Isolation Forest found {anomaly_result['anomaly_count']} anomaly regions")
     print("  where the terrain deviates from the surrounding natural pattern.")
     if feature_map is not None:
-        print(f"  Feature detection identified {feature_result['feature_count']}"
-              " geomorphological features.")
+        print(
+            f"  Feature detection identified {feature_result['feature_count']}"
+            " geomorphological features."
+        )
     print()
     print("  On this terrain, anomalies should correlate with:")
     print("    - The hilltop the Romans fortified (highest anomaly density)")

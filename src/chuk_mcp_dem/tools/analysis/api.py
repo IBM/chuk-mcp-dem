@@ -4,8 +4,15 @@ and Phase 3.0 ML-enhanced terrain analysis.
 """
 
 import logging
+import math
+
+import chuk_mcp_server.context as _chuk_ctx
+from chuk_view_schemas import LayerStyle, MapContent, MapLayer, ProfileContent, ProfilePoint
+from chuk_view_schemas.chuk_mcp import map_tool, profile_tool
+from chuk_view_schemas.map import MapCenter
 
 from ...constants import (
+    BASEMAP_OPTIONS,
     DEFAULT_ALTITUDE,
     DEFAULT_ANOMALY_SENSITIVITY,
     DEFAULT_AZIMUTH,
@@ -18,6 +25,7 @@ from ...constants import (
     DEFAULT_SOURCE,
     DEFAULT_Z_FACTOR,
     FEATURE_METHODS,
+    INTERPRETATION_CONTEXT_DESCRIPTIONS,
     INTERPRETATION_CONTEXTS,
     INTERPOLATION_METHODS,
     LANDFORM_METHODS,
@@ -50,6 +58,18 @@ from ...models.responses import (
     WatershedResponse,
     format_response,
 )
+
+# Inject create_message into chuk_mcp_server.context if the installed version lacks it
+if not hasattr(_chuk_ctx, "create_message"):
+
+    async def _mcp_sampling_create_message(**kwargs):
+        from mcp.server.lowlevel.server import request_ctx
+
+        ctx = request_ctx.get()
+        return await ctx.session.create_message(**kwargs)
+
+    _chuk_ctx.create_message = _mcp_sampling_create_message  # type: ignore[assignment]
+del _chuk_ctx
 
 logger = logging.getLogger(__name__)
 
@@ -550,6 +570,159 @@ def register_analysis_tools(mcp, manager):
             logger.error(f"dem_profile failed: {e}")
             return format_response(ErrorResponse(error=str(e)), output_mode)
 
+    @profile_tool(
+        mcp,
+        "dem_profile_chart",
+        description=(
+            "Extract an elevation profile between two points and render it as an "
+            "interactive chart showing distance vs elevation."
+        ),
+        read_only_hint=True,
+    )
+    async def dem_profile_chart(
+        start: list[float],
+        end: list[float],
+        source: str = DEFAULT_SOURCE,
+        num_points: int = DEFAULT_NUM_POINTS,
+        interpolation: str = DEFAULT_INTERPOLATION,
+    ) -> ProfileContent:
+        """Render an elevation profile as an interactive chart.
+
+        Args:
+            start: Start point [lon, lat]
+            end: End point [lon, lat]
+            source: DEM source (cop30, cop90, srtm, aster, 3dep, fabdem)
+            num_points: Number of sample points (default 100, minimum 2)
+            interpolation: Sampling method (nearest, bilinear, cubic)
+
+        Returns:
+            Profile chart with distance on x-axis and elevation on y-axis
+        """
+        if num_points < 2:
+            raise ValueError(ErrorMessages.INVALID_NUM_POINTS.format(num_points))
+        if interpolation not in INTERPOLATION_METHODS:
+            raise ValueError(
+                ErrorMessages.INVALID_INTERPOLATION.format(
+                    interpolation, ", ".join(INTERPOLATION_METHODS)
+                )
+            )
+
+        try:
+            result = await manager.fetch_profile(
+                start=start,
+                end=end,
+                source=source,
+                num_points=num_points,
+                interpolation=interpolation,
+            )
+        except Exception as e:
+            logger.error(f"dem_profile_chart failed: {e}")
+            raise
+
+        title = (
+            f"Elevation Profile ({source}) "
+            f"| +{result.elevation_gain_m:.0f}m / -{result.elevation_loss_m:.0f}m"
+        )
+
+        return ProfileContent(
+            title=title,
+            x_label="Distance (m)",
+            y_label="Elevation (m)",
+            fill=True,
+            points=[
+                ProfilePoint(x=round(d, 1), y=round(e, 1))
+                for d, e in zip(result.distances_m, result.elevations)
+                if not (e != e)  # skip NaN elevations
+            ],
+        )
+
+    @map_tool(
+        mcp,
+        "dem_map",
+        description=(
+            "Show a DEM analysis area on an interactive map. "
+            "Renders the bounding box on a terrain, satellite, osm, or dark basemap."
+        ),
+        read_only_hint=True,
+    )
+    async def dem_map(
+        bbox: list[float],
+        source: str = DEFAULT_SOURCE,
+        basemap: str = "terrain",
+    ) -> MapContent:
+        """Show a DEM bounding box on an interactive map.
+
+        Args:
+            bbox: Bounding box [west, south, east, north] in EPSG:4326
+            source: DEM source label shown in the layer name (cop30, cop90, srtm, aster, 3dep, fabdem)
+            basemap: Map style — terrain, satellite, osm, or dark (default: terrain)
+
+        Returns:
+            Interactive map centred on the analysis area with the bbox highlighted
+        """
+        if len(bbox) != 4:
+            raise ValueError(ErrorMessages.INVALID_BBOX)
+        west, south, east, north = bbox
+        if west >= east:
+            raise ValueError(ErrorMessages.INVALID_BBOX_VALUES.format(west, east))
+        if south >= north:
+            raise ValueError(ErrorMessages.INVALID_BBOX_LAT.format(south, north))
+        if basemap not in BASEMAP_OPTIONS:
+            raise ValueError(
+                ErrorMessages.INVALID_BASEMAP.format(basemap, ", ".join(BASEMAP_OPTIONS))
+            )
+
+        try:
+            center_lat = (south + north) / 2
+            center_lon = (west + east) / 2
+            max_extent = max(east - west, north - south)
+            zoom = max(1, min(15, round(math.log2(360 / max_extent))))
+
+            bbox_geojson = {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [
+                                [
+                                    [west, south],
+                                    [east, south],
+                                    [east, north],
+                                    [west, north],
+                                    [west, south],
+                                ]
+                            ],
+                        },
+                        "properties": {"label": f"{source} coverage area"},
+                    }
+                ],
+            }
+
+            return MapContent(
+                center=MapCenter(lat=center_lat, lon=center_lon),
+                zoom=zoom,
+                basemap=basemap,
+                layers=[
+                    MapLayer(
+                        id="dem-area",
+                        label=f"DEM Area ({source})",
+                        features=bbox_geojson,
+                        style=LayerStyle(
+                            color="#3388ff",
+                            fill_color="#3388ff",
+                            fill_opacity=0.15,
+                            weight=2,
+                        ),
+                    )
+                ],
+            )
+
+        except Exception as e:
+            logger.error(f"dem_map failed: {e}")
+            raise
+
     @mcp.tool()
     async def dem_viewshed(
         observer: list[float],
@@ -862,9 +1035,7 @@ def register_analysis_tools(mcp, manager):
         try:
             if method not in FEATURE_METHODS:
                 raise ValueError(
-                    ErrorMessages.INVALID_FEATURE_METHOD.format(
-                        method, ", ".join(FEATURE_METHODS)
-                    )
+                    ErrorMessages.INVALID_FEATURE_METHOD.format(method, ", ".join(FEATURE_METHODS))
                 )
             if output_format not in OUTPUT_FORMATS:
                 raise ValueError(
@@ -951,42 +1122,17 @@ def register_analysis_tools(mcp, manager):
             try:
                 prep = await manager.prepare_for_interpretation(artifact_ref)
             except Exception as e:
-                raise ValueError(
-                    ErrorMessages.INVALID_ARTIFACT_REF.format(artifact_ref)
-                ) from e
+                raise ValueError(ErrorMessages.INVALID_ARTIFACT_REF.format(artifact_ref)) from e
 
             # Base64-encode the PNG
             import base64
+
             png_b64 = base64.b64encode(prep.png_bytes).decode()
 
             # Build system context
-            context_descriptions = {
-                "general": "terrain and elevation analysis",
-                "archaeological_survey": (
-                    "archaeological landscape survey, identifying earthworks, "
-                    "barrows, enclosures, field systems, and anthropogenic terrain "
-                    "modifications"
-                ),
-                "flood_risk": (
-                    "flood risk assessment, identifying drainage channels, "
-                    "flood plains, catchment areas, and vulnerable low-lying terrain"
-                ),
-                "geological": (
-                    "geological analysis, identifying rock formations, fault lines, "
-                    "erosion patterns, and geomorphological processes"
-                ),
-                "military_history": (
-                    "military terrain analysis, identifying defensive positions, "
-                    "line-of-sight advantages, natural barriers, and strategic terrain"
-                ),
-                "urban_planning": (
-                    "urban planning and development, identifying buildable terrain, "
-                    "slope constraints, drainage patterns, and natural hazards"
-                ),
-            }
             system_prompt = (
                 f"You are a terrain analysis expert specialising in "
-                f"{context_descriptions.get(context, context)}. "
+                f"{INTERPRETATION_CONTEXT_DESCRIPTIONS.get(context, context)}. "
                 f"Analyse the terrain image provided and describe what you observe. "
                 f"Identify notable features, patterns, and any anomalies."
             )
@@ -1005,53 +1151,41 @@ def register_analysis_tools(mcp, manager):
             if meta.get("bbox"):
                 user_text += f", Bbox: {meta['bbox']}"
 
-            # Call MCP sampling
+            # Call MCP sampling via chuk_mcp_server context API
             try:
-                from mcp.server.lowlevel.server import request_ctx
-                from mcp.types import (
-                    ImageContent,
-                    SamplingMessage,
-                    TextContent,
-                )
+                from chuk_mcp_server.context import create_message
 
                 messages = [
-                    SamplingMessage(
-                        role="user",
-                        content=TextContent(type="text", text=user_text),
-                    ),
-                    SamplingMessage(
-                        role="user",
-                        content=ImageContent(
-                            type="image",
-                            data=png_b64,
-                            mimeType="image/png",
-                        ),
-                    ),
+                    {"role": "user", "content": {"type": "text", "text": user_text}},
+                    {
+                        "role": "user",
+                        "content": {
+                            "type": "image",
+                            "data": png_b64,
+                            "mimeType": "image/png",
+                        },
+                    },
                 ]
 
-                ctx = request_ctx.get()
-                result = await ctx.session.create_message(
+                result = await create_message(
                     messages=messages,
                     max_tokens=2000,
                     system_prompt=system_prompt,
                 )
 
-                # Extract text from result
+                # Extract text from result (plain dict)
                 interpretation = ""
-                model_name = getattr(result, "model", "unknown")
-                if hasattr(result, "content"):
-                    if isinstance(result.content, str):
-                        interpretation = result.content
-                    elif hasattr(result.content, "text"):
-                        interpretation = result.content.text
-                    elif isinstance(result.content, list):
-                        parts = []
-                        for block in result.content:
-                            if hasattr(block, "text"):
-                                parts.append(block.text)
-                        interpretation = "\n".join(parts)
+                model_name = result.get("model", "unknown")
+                content = result.get("content", "")
+                if isinstance(content, str):
+                    interpretation = content
+                elif isinstance(content, dict) and "text" in content:
+                    interpretation = content["text"]
+                elif isinstance(content, list):
+                    parts = [block.get("text", "") for block in content if isinstance(block, dict)]
+                    interpretation = "\n".join(parts)
 
-            except (LookupError, ImportError):
+            except (RuntimeError, LookupError):
                 return format_response(
                     ErrorResponse(error=ErrorMessages.SAMPLING_NOT_SUPPORTED),
                     output_mode,

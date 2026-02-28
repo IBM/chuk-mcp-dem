@@ -181,14 +181,20 @@ async def main() -> None:
     if landforms is not None:
         cmap = ListedColormap(LANDFORM_COLORS)
         im = ax.imshow(landforms, cmap=cmap, vmin=-0.5, vmax=8.5, interpolation="nearest")
-        ax.set_title(
-            f"Landforms (dominant: {landform_result['dominant_landform']})", fontsize=13
-        )
+        ax.set_title(f"Landforms (dominant: {landform_result['dominant_landform']})", fontsize=13)
         cbar = fig.colorbar(im, ax=ax, ticks=range(9), shrink=0.7)
         cbar.ax.set_yticklabels(LANDFORM_CLASSES, fontsize=7)
     else:
-        ax.text(0.5, 0.5, "Landform classification\nfailed", transform=ax.transAxes,
-                ha="center", va="center", fontsize=14, color="red")
+        ax.text(
+            0.5,
+            0.5,
+            "Landform classification\nfailed",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=14,
+            color="red",
+        )
         ax.set_title("Landforms (error)", fontsize=13)
     ax.axis("off")
 
@@ -196,16 +202,20 @@ async def main() -> None:
     ax = axes[0, 2]
     if anomaly_scores is not None:
         im = ax.imshow(anomaly_scores, cmap="YlOrRd", vmin=0, vmax=1)
-        ax.set_title(
-            f"Anomaly Scores ({anomaly_result['anomaly_count']} regions)", fontsize=13
-        )
+        ax.set_title(f"Anomaly Scores ({anomaly_result['anomaly_count']} regions)", fontsize=13)
         fig.colorbar(im, ax=ax, label="Score", shrink=0.7)
     else:
-        ax.text(0.5, 0.5, "Anomaly detection\nrequires scikit-learn\n\n"
-                "pip install chuk-mcp-dem[ml]",
-                transform=ax.transAxes, ha="center", va="center",
-                fontsize=12, color="gray",
-                bbox=dict(boxstyle="round", facecolor="lightyellow", alpha=0.8))
+        ax.text(
+            0.5,
+            0.5,
+            "Anomaly detection\nrequires scikit-learn\n\npip install chuk-mcp-dem[ml]",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=12,
+            color="gray",
+            bbox=dict(boxstyle="round", facecolor="lightyellow", alpha=0.8),
+        )
         ax.set_title("Anomaly Detection (unavailable)", fontsize=13)
     ax.axis("off")
 
@@ -221,8 +231,16 @@ async def main() -> None:
         ax.set_title("Temporal Change (GLO-90 vs GLO-30)", fontsize=13)
         fig.colorbar(im, ax=ax, label="Change (m)", shrink=0.7)
     else:
-        ax.text(0.5, 0.5, "Temporal change\nfailed", transform=ax.transAxes,
-                ha="center", va="center", fontsize=14, color="red")
+        ax.text(
+            0.5,
+            0.5,
+            "Temporal change\nfailed",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=14,
+            color="red",
+        )
         ax.set_title("Temporal Change (error)", fontsize=13)
     ax.axis("off")
 
@@ -233,9 +251,7 @@ async def main() -> None:
     if feature_map is not None:
         feat_cmap = ListedColormap(feat_colors)
         ax.imshow(feature_map, cmap=feat_cmap, vmin=-0.5, vmax=6.5, interpolation="nearest")
-        ax.set_title(
-            f"Feature Detection ({feature_result['feature_count']} regions)", fontsize=13
-        )
+        ax.set_title(f"Feature Detection ({feature_result['feature_count']} regions)", fontsize=13)
         legend_patches = [
             Patch(facecolor=feat_colors[i], label=feat_classes[i])
             for i in range(len(feat_classes))
@@ -243,8 +259,16 @@ async def main() -> None:
         ]
         ax.legend(handles=legend_patches, loc="lower right", fontsize=7, framealpha=0.8)
     else:
-        ax.text(0.5, 0.5, "Feature detection\nfailed", transform=ax.transAxes,
-                ha="center", va="center", fontsize=14, color="red")
+        ax.text(
+            0.5,
+            0.5,
+            "Feature detection\nfailed",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=14,
+            color="red",
+        )
         ax.set_title("Feature Detection (error)", fontsize=13)
     ax.axis("off")
 
@@ -260,13 +284,24 @@ async def main() -> None:
         ax.set_title("Landform Distribution", fontsize=13)
         for bar, pct in zip(bars, percentages):
             ax.text(
-                bar.get_width() + 0.3, bar.get_y() + bar.get_height() / 2,
-                f"{pct:.1f}%", va="center", fontsize=8,
+                bar.get_width() + 0.3,
+                bar.get_y() + bar.get_height() / 2,
+                f"{pct:.1f}%",
+                va="center",
+                fontsize=8,
             )
         ax.set_xlim(0, max(percentages) * 1.2 if percentages else 100)
     else:
-        ax.text(0.5, 0.5, "No landform data", transform=ax.transAxes,
-                ha="center", va="center", fontsize=14, color="gray")
+        ax.text(
+            0.5,
+            0.5,
+            "No landform data",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=14,
+            color="gray",
+        )
         ax.set_title("Landform Distribution", fontsize=13)
 
     fig.suptitle(

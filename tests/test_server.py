@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers: because importing server.py triggers `from .async_server import mcp`
 # which in turn imports ChukMCPServer, DEMManager, and the register_*_tools

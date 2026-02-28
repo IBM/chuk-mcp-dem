@@ -14,6 +14,7 @@ from ...constants import (
     DEFAULT_SOURCE,
     OUTPUT_FORMATS,
     TERRAIN_DERIVATIVES,
+    TOOL_COUNT,
     ServerConfig,
     StorageProvider,
     EnvVar,
@@ -150,7 +151,7 @@ def register_discovery_tools(mcp, manager):
                 terrain_derivatives=TERRAIN_DERIVATIVES,
                 analysis_tools=ANALYSIS_TOOLS,
                 output_formats=OUTPUT_FORMATS,
-                tool_count=22,
+                tool_count=TOOL_COUNT,
                 llm_guidance=(
                     "Use dem_list_sources to discover available DEMs. "
                     "Use dem_describe_source for detailed source info. "
@@ -159,6 +160,8 @@ def register_discovery_tools(mcp, manager):
                     "Use dem_fetch_point for single-point elevation queries. "
                     "Use dem_hillshade/dem_slope/dem_aspect for terrain analysis. "
                     "Use dem_profile for elevation cross-sections between two points. "
+                    "Use dem_profile_chart to render an elevation profile as an interactive chart. "
+                    "Use dem_map to display a DEM analysis area on an interactive map. "
                     "Use dem_viewshed for visibility analysis from an observer point. "
                     "Default source is cop30 (Copernicus GLO-30, 30m global)."
                 ),
