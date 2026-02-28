@@ -261,7 +261,7 @@ Tier 3 upgrade: contextual reasoning about terrain. Takes any terrain derivative
 
 ---
 
-## Phase 3.2: Interactive View Tools (v0.8.0) -- COMPLETE
+## Phase 3.2: Interactive View Tools (v0.2.2) -- COMPLETE
 
 Tier 1 upgrade: rich UI rendering for MCP clients that support `view_tool` (e.g. Claude Desktop with mcp-views). View tools return `structuredContent` instead of JSON strings and use the `chuk-view-schemas` Pydantic models.
 
@@ -346,7 +346,7 @@ Note: Feature detection (`dem_detect_features`) uses scipy convolutional filters
 | 0.5.1 | 2.2 | LLM Robustness | `dem_fetch_points` input normalization, improved schema docstrings, 1006 tests (95% coverage) |
 | 0.6.0 | 3.0 | ML Terrain Analysis | +4 tools (landforms, anomalies, temporal change, feature detection), `[ml]` optional extra, 1167 tests |
 | 0.7.0 | 3.1 | LLM Interpretation | +1 tool (interpret), MCP sampling, no new deps, 1205 tests |
-| 0.8.0 | 3.2 | Interactive View Tools | +2 tools (profile_chart, map), chuk-view-schemas, TOOL_COUNT constant, 1231 tests |
+| 0.2.2 | 3.2 | Interactive View Tools | +2 tools (profile_chart, map), chuk-view-schemas, TOOL_COUNT constant, 1231 tests |
 
 ---
 
