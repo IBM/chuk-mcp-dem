@@ -36,11 +36,14 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install minimal runtime dependencies
-# Note: rasterio binary wheels bundle GDAL internally — no system libgdal needed
+# Install runtime dependencies
+# rasterio wheels bundle GDAL but still need system libexpat1, libxml2, libcurl4
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
+    libexpat1 \
+    libxml2 \
+    libcurl4 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python environment from builder
