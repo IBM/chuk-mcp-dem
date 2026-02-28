@@ -36,11 +36,11 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install minimal runtime dependencies (GDAL runtime libs for rasterio)
+# Install minimal runtime dependencies
+# Note: rasterio binary wheels bundle GDAL internally — no system libgdal needed
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
-    libgdal32 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python environment from builder
@@ -77,6 +77,6 @@ EXPOSE 8003
 
 # Labels for metadata
 LABEL description="DEM MCP Server - Digital Elevation Model Discovery, Retrieval & Terrain Analysis" \
-      version="0.1.0" \
+      version="0.2" \
       org.opencontainers.image.title="DEM MCP Server" \
       org.opencontainers.image.description="MCP server for DEM discovery, retrieval and terrain analysis"
