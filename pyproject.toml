@@ -1,6 +1,6 @@
 [project]
 name = "chuk-mcp-dem"
-version = "0.2.2"
+version = "0.2.3"
 description = "Digital Elevation Model Discovery, Retrieval & Terrain Analysis MCP Server"
 authors = []
 license = { text = "Apache-2.0" }
@@ -8,8 +8,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "mcp>=0.9.1",
-    "chuk-mcp-server>=0.25.2",
-    "chuk-artifacts",
+    "chuk-mcp-server>=0.25.3",
     "python-dotenv>=1.1.1",
     "pydantic>=2.0.0",
     # Raster I/O (for COG reading & DEM processing)
@@ -25,6 +24,7 @@ dependencies = [
     "scipy>=1.10.0",
     # Profile chart & map views (ProfileContent, ProfilePoint, MapContent etc.)
     "chuk-view-schemas>=0.1.4",
+    "chuk-artifacts>=0.11.1",
 ]
 
 [project.optional-dependencies]
