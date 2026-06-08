@@ -8,7 +8,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "mcp>=0.9.1",
-    "chuk-mcp-server>=0.25.4",
+    "chuk-mcp-server>=0.25.5",
     "python-dotenv>=1.1.1",
     "pydantic>=2.0.0",
     # Raster I/O (for COG reading & DEM processing)
@@ -59,6 +59,7 @@ dev = [
     "bandit>=1.7.0",
     "pre-commit>=3.0.0",
     "matplotlib>=3.7.0",
+    "scikit-learn>=1.3.0",
 ]
 
 [project.scripts]
@@ -117,3 +118,12 @@ target-version = "py311"
 [tool.bandit]
 exclude_dirs = ["tests"]
 skips = ["B101"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
+follow_imports = "silent"
+disallow_untyped_defs = false
+warn_return_any = false
+show_error_codes = true
